@@ -82,16 +82,15 @@ graph LR
 Run each script in a Snowsight worksheet, in order:
 
 ```
-1. scripts/01_setup.sql         -- Infrastructure
-2. scripts/03_curated.sql       -- Dimensions (run BEFORE market data)
-3. scripts/02_market_data.sql   -- Market data tables
-4. scripts/04_search_services.sql -- Search services
-5. scripts/05_semantic_views.sql  -- Semantic views
-6. scripts/06_agents.sql        -- Agents
-7. scripts/07_refresh.sql       -- Daily refresh pipeline
+1. scripts/01_setup.sql            -- Infrastructure (role, DB, warehouses)
+2. scripts/02_data.sql             -- Dimensions + market data + derived tables
+3. scripts/03_search_services.sql  -- Corpus tables + Cortex Search Services
+4. scripts/04_semantic_views.sql   -- Semantic Views
+5. scripts/05_agents.sql           -- Cortex Agents
+6. scripts/06_refresh.sql          -- Dynamic Tables + daily Task
 ```
 
-**Important:** Run `03_curated.sql` before `02_market_data.sql` because market data tables reference `DIM_ISSUER`.
+All scripts are idempotent — safe to re-run at any time.
 
 ## Streamlit Portal
 

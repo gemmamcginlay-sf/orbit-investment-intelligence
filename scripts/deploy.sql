@@ -4,17 +4,13 @@
 -- Run scripts in this order from Snowsight worksheets.
 -- Each script is idempotent (uses CREATE OR REPLACE).
 --
--- IMPORTANT: Run 03_curated.sql FIRST (creates DIM_ISSUER), then 02_market_data.sql
--- because market data tables JOIN to DIM_ISSUER.
---
 -- Deployment order:
---   1. scripts/01_setup.sql        (infra: DB, schemas, role, warehouses)
---   2. scripts/03_curated.sql      (dimensions + model portfolios — DIM_ISSUER first!)
---   3. scripts/02_market_data.sql  (market data from Paid share)
---   4. scripts/04_search_services.sql (corpus tables + Cortex Search)
---   5. scripts/05_semantic_views.sql  (Semantic Views for Cortex Analyst)
---   6. scripts/06_agents.sql       (3 Cortex Agents)
---   7. scripts/07_refresh.sql      (Dynamic Tables + daily Task)
+--   1. scripts/01_setup.sql           (infra: DB, schemas, role, warehouses)
+--   2. scripts/02_data.sql            (dimensions + market data + derived tables)
+--   3. scripts/03_search_services.sql (corpus tables + Cortex Search)
+--   4. scripts/04_semantic_views.sql  (Semantic Views for Cortex Analyst)
+--   5. scripts/05_agents.sql          (3 Cortex Agents)
+--   6. scripts/06_refresh.sql         (Dynamic Tables + daily Task)
 --
 -- Total deployment time: ~5-10 minutes
 -- ============================================================================
