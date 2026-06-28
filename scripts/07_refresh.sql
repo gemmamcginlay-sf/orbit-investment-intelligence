@@ -92,6 +92,9 @@ WHERE r.DAILY_RETURN IS NOT NULL;
 -- ---------------------------------------------------------------------------
 -- 3. Scheduled Task: Full market data refresh (daily 06:00 UTC)
 -- ---------------------------------------------------------------------------
+-- Suspend existing task before replacing (avoids errors on re-run)
+ALTER TASK IF EXISTS ORBIT_DEMO.CURATED.DAILY_MARKET_DATA_REFRESH SUSPEND;
+
 CREATE OR REPLACE TASK ORBIT_DEMO.CURATED.DAILY_MARKET_DATA_REFRESH
     WAREHOUSE = ORBIT_DEMO_WH
     SCHEDULE = 'USING CRON 0 6 * * * UTC'
