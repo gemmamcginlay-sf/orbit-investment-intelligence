@@ -1,0 +1,308 @@
+name: ORBIT_RESEARCH_VIEW
+description: >
+  Company research data covering SEC financial statements, revenue segments,
+  insider trading activity, and institutional holdings (13F filings).
+  Use this view for fundamental analysis, company deep-dives, and ownership research.
+
+tables:
+  - name: issuers
+    description: Company reference data (ticker, name, sector, CIK)
+    base_table:
+      database: ORBIT_DEMO
+      schema: CURATED
+      table: DIM_ISSUER
+    primary_key:
+      columns: [ISSUER_ID]
+    dimensions:
+      - name: issuer_id
+        expr: ISSUER_ID
+        data_type: INT
+      - name: ticker
+        expr: TICKER
+        data_type: VARCHAR
+      - name: company_name
+        expr: COMPANY_NAME
+        data_type: VARCHAR
+      - name: gics_sector
+        expr: GICS_SECTOR
+        data_type: VARCHAR
+        is_enum: true
+        sample_values: ['Information Technology','Financials','Health Care','Consumer Discretionary','Communication Services','Energy','Industrials','Consumer Staples','Utilities']
+      - name: cik
+        expr: CIK
+        data_type: VARCHAR
+      - name: country
+        expr: COUNTRY
+        data_type: VARCHAR
+
+  - name: financials
+    description: Quarterly and annual financial statements from SEC XBRL filings (income statement, balance sheet, cash flow, derived metrics)
+    base_table:
+      database: ORBIT_DEMO
+      schema: MARKET_DATA
+      table: FACT_SEC_FINANCIALS
+    primary_key:
+      columns: [FINANCIAL_ID]
+    time_dimensions:
+      - name: period_end_date
+        expr: PERIOD_END_DATE
+        data_type: DATE
+    dimensions:
+      - name: f_issuer_id
+        expr: ISSUER_ID
+        data_type: INT
+      - name: f_ticker
+        expr: TICKER
+        data_type: VARCHAR
+      - name: f_company_name
+        expr: COMPANY_NAME
+        data_type: VARCHAR
+      - name: f_gics_sector
+        expr: GICS_SECTOR
+        data_type: VARCHAR
+      - name: fiscal_period
+        expr: FISCAL_PERIOD
+        data_type: VARCHAR
+        is_enum: true
+        sample_values: ['Q','H1','Q3_YTD','FY']
+    facts:
+      - name: revenue
+        expr: REVENUE
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: net_income
+        expr: NET_INCOME
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: gross_profit
+        expr: GROSS_PROFIT
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: operating_income
+        expr: OPERATING_INCOME
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: eps_basic
+        expr: EPS_BASIC
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: eps_diluted
+        expr: EPS_DILUTED
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: rd_expense
+        expr: RD_EXPENSE
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: total_assets
+        expr: TOTAL_ASSETS
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: total_liabilities
+        expr: TOTAL_LIABILITIES
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: total_equity
+        expr: TOTAL_EQUITY
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: cash_and_equivalents
+        expr: CASH_AND_EQUIVALENTS
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: long_term_debt
+        expr: LONG_TERM_DEBT
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: operating_cash_flow
+        expr: OPERATING_CASH_FLOW
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: free_cash_flow
+        expr: FREE_CASH_FLOW
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: gross_margin_pct
+        expr: GROSS_MARGIN_PCT
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: operating_margin_pct
+        expr: OPERATING_MARGIN_PCT
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: net_margin_pct
+        expr: NET_MARGIN_PCT
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: roe_pct
+        expr: ROE_PCT
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: debt_to_equity
+        expr: DEBT_TO_EQUITY
+        data_type: FLOAT
+        access_modifier: public_access
+
+  - name: segments
+    description: Revenue breakdown by business segment and geography from SEC filings
+    base_table:
+      database: ORBIT_DEMO
+      schema: MARKET_DATA
+      table: FACT_SEC_SEGMENTS
+    primary_key:
+      columns: [SEGMENT_ID]
+    time_dimensions:
+      - name: period_end_date
+        expr: PERIOD_END_DATE
+        data_type: DATE
+    dimensions:
+      - name: s_issuer_id
+        expr: ISSUER_ID
+        data_type: INT
+      - name: s_ticker
+        expr: TICKER
+        data_type: VARCHAR
+      - name: segment_name
+        expr: SEGMENT_NAME
+        data_type: VARCHAR
+    facts:
+      - name: segment_revenue
+        expr: SEGMENT_REVENUE
+        data_type: FLOAT
+        access_modifier: public_access
+
+  - name: insider_transactions
+    description: SEC Form 4 insider trading activity (buys and sells by company officers)
+    base_table:
+      database: ORBIT_DEMO
+      schema: MARKET_DATA
+      table: FACT_INSIDER_TRANSACTIONS
+    primary_key:
+      columns: [INSIDER_TX_ID]
+    time_dimensions:
+      - name: transaction_date
+        expr: TRANSACTION_DATE
+        data_type: DATE
+    dimensions:
+      - name: it_issuer_id
+        expr: ISSUER_ID
+        data_type: INT
+      - name: it_ticker
+        expr: TICKER
+        data_type: VARCHAR
+      - name: issuer_name
+        expr: ISSUER_NAME
+        data_type: VARCHAR
+      - name: transaction_type
+        expr: TRANSACTION_TYPE
+        data_type: VARCHAR
+      - name: ownership
+        expr: OWNERSHIP
+        data_type: VARCHAR
+    facts:
+      - name: transaction_shares
+        expr: TRANSACTION_SHARES
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: transaction_price
+        expr: TRANSACTION_PRICE_PER_SHARE
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: post_transaction_shares
+        expr: POST_TRANSACTION_SHARES_OWNED
+        data_type: FLOAT
+        access_modifier: public_access
+
+  - name: institutional_holdings
+    description: SEC 13F institutional ownership filings showing which institutions hold which stocks
+    base_table:
+      database: ORBIT_DEMO
+      schema: MARKET_DATA
+      table: FACT_INSTITUTIONAL_HOLDINGS
+    primary_key:
+      columns: [HOLDING_ID]
+    time_dimensions:
+      - name: filing_date
+        expr: FILING_DATE
+        data_type: DATE
+    dimensions:
+      - name: ih_issuer_id
+        expr: ISSUER_ID
+        data_type: INT
+      - name: ih_ticker
+        expr: TICKER
+        data_type: VARCHAR
+      - name: institution_name
+        expr: INSTITUTION_NAME
+        data_type: VARCHAR
+    facts:
+      - name: market_value_usd
+        expr: MARKET_VALUE_USD
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: shares_held
+        expr: SHARES_HELD
+        data_type: FLOAT
+        access_modifier: public_access
+
+relationships:
+  - name: financials_to_issuers
+    left_table: financials
+    right_table: issuers
+    relationship_columns:
+      - left_column: f_issuer_id
+        right_column: issuer_id
+  - name: segments_to_issuers
+    left_table: segments
+    right_table: issuers
+    relationship_columns:
+      - left_column: s_issuer_id
+        right_column: issuer_id
+  - name: insider_to_issuers
+    left_table: insider_transactions
+    right_table: issuers
+    relationship_columns:
+      - left_column: it_issuer_id
+        right_column: issuer_id
+  - name: holdings_to_issuers
+    left_table: institutional_holdings
+    right_table: issuers
+    relationship_columns:
+      - left_column: ih_issuer_id
+        right_column: issuer_id
+
+module_custom_instructions:
+  sql_generation:
+    - "Always join fact tables to issuers when the user mentions a company by name or ticker"
+    - "For financial trends, filter to FISCAL_PERIOD = 'Q' for quarterly or 'FY' for annual"
+    - "When comparing companies, use the issuers table to resolve names to ISSUER_ID"
+    - "Revenue segment data may have different segment names across quarters"
+
+verified_queries:
+  - name: apple_revenue_trend
+    question: "Show me Apple's quarterly revenue over the last 2 years"
+    sql: >
+      SELECT period_end_date, revenue, net_income, operating_margin_pct
+      FROM __financials
+      WHERE f_ticker = 'AAPL' AND fiscal_period = 'Q'
+      ORDER BY period_end_date DESC
+      LIMIT 8
+    use_as_onboarding_question: true
+  - name: insider_activity
+    question: "What insider trading activity has there been for Tesla recently?"
+    sql: >
+      SELECT transaction_date, issuer_name, transaction_type, transaction_shares, transaction_price
+      FROM __insider_transactions
+      WHERE it_ticker = 'TSLA'
+      ORDER BY transaction_date DESC
+      LIMIT 20
+    use_as_onboarding_question: true
+  - name: top_holders
+    question: "Who are the largest institutional holders of NVIDIA?"
+    sql: >
+      SELECT institution_name, shares_held, market_value_usd, filing_date
+      FROM __institutional_holdings
+      WHERE ih_ticker = 'NVDA'
+      ORDER BY market_value_usd DESC
+      LIMIT 10
+    use_as_onboarding_question: true

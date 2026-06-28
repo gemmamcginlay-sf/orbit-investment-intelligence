@@ -1,0 +1,202 @@
+name: ORBIT_MARKET_VIEW
+description: >
+  Market intelligence data covering US Treasury yields, economic indicators,
+  foreign exchange rates, central bank policy rates, stock prices, and country emissions.
+  Use this view for questions about macro conditions, interest rates, currencies, and market data.
+
+tables:
+  - name: treasury_yields
+    description: US Treasury par yield curve rates across maturities (1M to 30Y)
+    base_table:
+      database: ORBIT_DEMO
+      schema: MARKET_DATA
+      table: FACT_TREASURY_YIELDS
+    primary_key:
+      columns: [YIELD_ID]
+    time_dimensions:
+      - name: date
+        expr: DATE
+        data_type: DATE
+    dimensions:
+      - name: maturity_code
+        expr: MATURITY_CODE
+        data_type: VARCHAR
+        is_enum: true
+        sample_values: ['1M','3M','6M','1Y','2Y','3Y','5Y','7Y','10Y','20Y','30Y']
+      - name: maturity_label
+        expr: MATURITY_LABEL
+        data_type: VARCHAR
+    facts:
+      - name: yield_pct
+        expr: YIELD_PCT
+        data_type: FLOAT
+        access_modifier: public_access
+
+  - name: economic_indicators
+    description: US economic indicators including GDP, CPI, unemployment, and federal funds rate
+    base_table:
+      database: ORBIT_DEMO
+      schema: MARKET_DATA
+      table: FACT_ECONOMIC_INDICATORS
+    primary_key:
+      columns: [INDICATOR_ID]
+    time_dimensions:
+      - name: date
+        expr: DATE
+        data_type: DATE
+    dimensions:
+      - name: indicator_name
+        expr: INDICATOR_NAME
+        data_type: VARCHAR
+      - name: indicator_category
+        expr: INDICATOR_CATEGORY
+        data_type: VARCHAR
+        is_enum: true
+        sample_values: ['GDP','INFLATION','UNEMPLOYMENT','INTEREST_RATE']
+      - name: country
+        expr: COUNTRY
+        data_type: VARCHAR
+      - name: unit
+        expr: UNIT
+        data_type: VARCHAR
+      - name: seasonally_adjusted
+        expr: SEASONALLY_ADJUSTED
+        data_type: VARCHAR
+    facts:
+      - name: value
+        expr: VALUE
+        data_type: FLOAT
+        access_modifier: public_access
+
+  - name: fx_rates
+    description: Foreign exchange rates for major currencies against USD
+    base_table:
+      database: ORBIT_DEMO
+      schema: MARKET_DATA
+      table: FACT_FX_RATES
+    primary_key:
+      columns: [FX_ID]
+    time_dimensions:
+      - name: date
+        expr: DATE
+        data_type: DATE
+    dimensions:
+      - name: currency_pair
+        expr: CURRENCY_PAIR
+        data_type: VARCHAR
+      - name: quote_currency
+        expr: QUOTE_CURRENCY
+        data_type: VARCHAR
+      - name: base_currency
+        expr: BASE_CURRENCY
+        data_type: VARCHAR
+    facts:
+      - name: exchange_rate
+        expr: EXCHANGE_RATE
+        data_type: FLOAT
+        access_modifier: public_access
+
+  - name: policy_rates
+    description: Central bank policy interest rates by country from BIS
+    base_table:
+      database: ORBIT_DEMO
+      schema: MARKET_DATA
+      table: FACT_POLICY_RATES
+    primary_key:
+      columns: [RATE_ID]
+    time_dimensions:
+      - name: date
+        expr: DATE
+        data_type: DATE
+    dimensions:
+      - name: rate_name
+        expr: RATE_NAME
+        data_type: VARCHAR
+      - name: country
+        expr: COUNTRY
+        data_type: VARCHAR
+    facts:
+      - name: rate_pct
+        expr: RATE_PCT
+        data_type: FLOAT
+        access_modifier: public_access
+
+  - name: stock_prices
+    description: Daily stock prices (OHLCV) for major companies
+    base_table:
+      database: ORBIT_DEMO
+      schema: MARKET_DATA
+      table: FACT_STOCK_PRICES
+    primary_key:
+      columns: [PRICE_ID]
+    time_dimensions:
+      - name: price_date
+        expr: PRICE_DATE
+        data_type: DATE
+    dimensions:
+      - name: ticker
+        expr: TICKER
+        data_type: VARCHAR
+      - name: company_name
+        expr: COMPANY_NAME
+        data_type: VARCHAR
+      - name: gics_sector
+        expr: GICS_SECTOR
+        data_type: VARCHAR
+        is_enum: true
+        sample_values: ['Information Technology','Financials','Health Care','Consumer Discretionary','Communication Services','Energy','Industrials','Consumer Staples','Utilities']
+    facts:
+      - name: price_open
+        expr: PRICE_OPEN
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: price_high
+        expr: PRICE_HIGH
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: price_low
+        expr: PRICE_LOW
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: price_close
+        expr: PRICE_CLOSE
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: volume
+        expr: VOLUME
+        data_type: NUMBER
+        access_modifier: public_access
+    metrics:
+      - name: latest_close
+        expr: MAX(PRICE_CLOSE)
+        synonyms: ['latest price','current price','last close']
+        access_modifier: public_access
+      - name: avg_volume
+        expr: AVG(VOLUME)
+        synonyms: ['average volume','mean volume']
+        access_modifier: public_access
+
+module_custom_instructions:
+  sql_generation:
+    - "When asked about yield curves, filter to the latest date and order by maturity"
+    - "For stock price trends, use PRICE_CLOSE and order by PRICE_DATE"
+    - "Economic indicator queries should specify INDICATOR_CATEGORY for clarity"
+
+verified_queries:
+  - name: latest_yield_curve
+    question: "Show me the current US Treasury yield curve"
+    sql: >
+      SELECT MATURITY_CODE, YIELD_PCT
+      FROM __treasury_yields
+      WHERE DATE = (SELECT MAX(DATE) FROM __treasury_yields)
+      ORDER BY YIELD_PCT
+    use_as_onboarding_question: true
+  - name: fed_funds_rate
+    question: "What is the current federal funds rate?"
+    sql: >
+      SELECT DATE, VALUE
+      FROM __economic_indicators
+      WHERE INDICATOR_CATEGORY = 'INTEREST_RATE'
+      ORDER BY DATE DESC
+      LIMIT 5
+    use_as_onboarding_question: true

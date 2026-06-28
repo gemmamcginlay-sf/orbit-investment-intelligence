@@ -1,0 +1,192 @@
+name: ORBIT_PORTFOLIO_VIEW
+description: >
+  Portfolio analytics covering holdings, allocation, performance, and benchmark comparison.
+  Use this view for questions about portfolio weights, sector allocation, top holdings,
+  and performance vs benchmarks.
+
+tables:
+  - name: portfolios
+    description: ORBIT model portfolio definitions (name, strategy, AUM, benchmark)
+    base_table:
+      database: ORBIT_DEMO
+      schema: CURATED
+      table: DIM_PORTFOLIO
+    primary_key:
+      columns: [PORTFOLIO_ID]
+    dimensions:
+      - name: portfolio_id
+        expr: PORTFOLIO_ID
+        data_type: INT
+      - name: portfolio_name
+        expr: PORTFOLIO_NAME
+        data_type: VARCHAR
+      - name: benchmark_name
+        expr: BENCHMARK_NAME
+        data_type: VARCHAR
+      - name: strategy
+        expr: STRATEGY
+        data_type: VARCHAR
+        is_enum: true
+        sample_values: ['Growth','Multi-Asset','ESG','Core','Value','Income']
+      - name: base_currency
+        expr: BASE_CURRENCY
+        data_type: VARCHAR
+    facts:
+      - name: aum_usd
+        expr: AUM_USD
+        data_type: FLOAT
+        access_modifier: public_access
+
+  - name: positions
+    description: Current portfolio positions showing holdings, weights, and market values
+    base_table:
+      database: ORBIT_DEMO
+      schema: CURATED
+      table: FACT_POSITION_DAILY
+    primary_key:
+      columns: [POSITION_ID]
+    time_dimensions:
+      - name: as_of_date
+        expr: AS_OF_DATE
+        data_type: DATE
+    dimensions:
+      - name: pos_portfolio_id
+        expr: PORTFOLIO_ID
+        data_type: INT
+      - name: pos_issuer_id
+        expr: ISSUER_ID
+        data_type: INT
+      - name: pos_ticker
+        expr: TICKER
+        data_type: VARCHAR
+    facts:
+      - name: weight
+        expr: WEIGHT
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: shares
+        expr: SHARES
+        data_type: NUMBER
+        access_modifier: public_access
+      - name: current_price
+        expr: CURRENT_PRICE
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: position_value_usd
+        expr: POSITION_VALUE_USD
+        data_type: FLOAT
+        access_modifier: public_access
+    metrics:
+      - name: total_positions
+        expr: COUNT(DISTINCT TICKER)
+        synonyms: ['number of holdings','holding count']
+        access_modifier: public_access
+      - name: total_market_value
+        expr: SUM(POSITION_VALUE_USD)
+        synonyms: ['portfolio value','total value','AUM']
+        access_modifier: public_access
+      - name: avg_position_weight
+        expr: AVG(WEIGHT)
+        synonyms: ['average weight']
+        access_modifier: public_access
+
+  - name: issuers
+    description: Company reference for enriching positions
+    base_table:
+      database: ORBIT_DEMO
+      schema: CURATED
+      table: DIM_ISSUER
+    primary_key:
+      columns: [ISSUER_ID]
+    dimensions:
+      - name: issuer_id
+        expr: ISSUER_ID
+        data_type: INT
+      - name: ticker
+        expr: TICKER
+        data_type: VARCHAR
+      - name: company_name
+        expr: COMPANY_NAME
+        data_type: VARCHAR
+      - name: gics_sector
+        expr: GICS_SECTOR
+        data_type: VARCHAR
+        is_enum: true
+        sample_values: ['Information Technology','Financials','Health Care','Consumer Discretionary','Communication Services','Energy','Industrials','Consumer Staples','Utilities']
+
+  - name: security_returns
+    description: Daily stock returns calculated from prices
+    base_table:
+      database: ORBIT_DEMO
+      schema: CURATED
+      table: V_SECURITY_RETURNS
+    primary_key:
+      columns: [TICKER, PRICE_DATE]
+    time_dimensions:
+      - name: price_date
+        expr: PRICE_DATE
+        data_type: DATE
+    dimensions:
+      - name: ret_ticker
+        expr: TICKER
+        data_type: VARCHAR
+      - name: ret_company_name
+        expr: COMPANY_NAME
+        data_type: VARCHAR
+      - name: ret_gics_sector
+        expr: GICS_SECTOR
+        data_type: VARCHAR
+    facts:
+      - name: price_close
+        expr: PRICE_CLOSE
+        data_type: FLOAT
+        access_modifier: public_access
+      - name: daily_return
+        expr: DAILY_RETURN
+        data_type: FLOAT
+        access_modifier: public_access
+
+relationships:
+  - name: positions_to_portfolios
+    left_table: positions
+    right_table: portfolios
+    relationship_columns:
+      - left_column: pos_portfolio_id
+        right_column: portfolio_id
+  - name: positions_to_issuers
+    left_table: positions
+    right_table: issuers
+    relationship_columns:
+      - left_column: pos_issuer_id
+        right_column: issuer_id
+
+module_custom_instructions:
+  sql_generation:
+    - "When asked about a portfolio by name, join positions to portfolios on PORTFOLIO_ID"
+    - "For sector allocation, GROUP BY gics_sector and SUM the weights"
+    - "Top holdings means ORDER BY weight DESC LIMIT N"
+    - "To calculate portfolio return, join positions to security_returns on ticker and weight the returns"
+
+verified_queries:
+  - name: tech_portfolio_holdings
+    question: "Show me the top 10 holdings in the ORBIT Technology portfolio"
+    sql: >
+      SELECT p.pos_ticker, i.company_name, i.gics_sector, p.weight, p.position_value_usd
+      FROM __positions p
+      JOIN __issuers i ON p.pos_issuer_id = i.issuer_id
+      JOIN __portfolios pf ON p.pos_portfolio_id = pf.portfolio_id
+      WHERE pf.portfolio_name = 'ORBIT Technology & Infrastructure'
+      ORDER BY p.weight DESC
+      LIMIT 10
+    use_as_onboarding_question: true
+  - name: sector_allocation
+    question: "What is the sector allocation of the ORBIT US Core Equity portfolio?"
+    sql: >
+      SELECT i.gics_sector, SUM(p.weight) AS sector_weight, COUNT(*) AS num_holdings
+      FROM __positions p
+      JOIN __issuers i ON p.pos_issuer_id = i.issuer_id
+      JOIN __portfolios pf ON p.pos_portfolio_id = pf.portfolio_id
+      WHERE pf.portfolio_name = 'ORBIT US Core Equity'
+      GROUP BY i.gics_sector
+      ORDER BY sector_weight DESC
+    use_as_onboarding_question: true
