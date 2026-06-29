@@ -140,4 +140,12 @@ Access via Snowflake Intelligence (CoWork) or the Streamlit portal's deep-link b
 - Secondary: `#2E8BC0` (medium teal)
 - Accent: `#5DADE2` (light blue)
 - Dark background: `#1B2838`
-- Logo files in `assets/logos/`
+- Logo files in `orbit_portal/.streamlit/`
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | Data model, system design, schema details |
+| [Demo Walkthrough](docs/DEMO_WALKTHROUGH.md) | Step-by-step demo guide with talking points |
+| [Deployment Guide](docs/DEPLOYMENT.md) | Prerequisites, deployment steps, troubleshooting |
