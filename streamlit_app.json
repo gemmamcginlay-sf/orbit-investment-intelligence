@@ -1,0 +1,6 @@
+{
+  "main_file": "orbit_portal.py",
+  "env_file": "environment.yml",
+  "pages_dir": "pages/",
+  "additional_source_files": []
+}
