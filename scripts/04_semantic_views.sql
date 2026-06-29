@@ -1,8 +1,8 @@
 -- ============================================================================
 -- ORBIT Investment Intelligence — Semantic Views
 -- ============================================================================
--- Creates semantic views from YAML definitions.
--- Uses FILE_PATH references to the YAML files in the repo.
+-- Creates semantic views using SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML.
+-- Fully idempotent — safe to re-run.
 -- ============================================================================
 
 USE ROLE ORBIT_DEMO_ROLE;
@@ -11,444 +11,428 @@ USE SCHEMA AI;
 USE WAREHOUSE ORBIT_DEMO_WH;
 
 -- ---------------------------------------------------------------------------
--- Note: Semantic Views are created from YAML definitions.
--- In Snowsight workspace, use the UI or run:
---   CREATE OR REPLACE SEMANTIC VIEW <name> FROM YAML ...
--- The YAML files are in the semantic_views/ directory of this repo.
+-- 1. ORBIT_MARKET_VIEW — Yields, FX, economic indicators, policy rates, prices
 -- ---------------------------------------------------------------------------
-
--- Market View — yields, FX, economic indicators, policy rates, stock prices
-CREATE OR REPLACE SEMANTIC VIEW ORBIT_MARKET_VIEW
-  COMMENT = 'Market intelligence: yields, FX, economic indicators, policy rates, stock prices'
-  DISTRIBUTION = 'PUBLIC'
-  AS '
+CALL SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML(
+  'ORBIT_DEMO.AI',
+  $$
 name: ORBIT_MARKET_VIEW
-description: "Market intelligence data covering US Treasury yields, economic indicators, foreign exchange rates, central bank policy rates, and stock prices."
+description: "Market intelligence: Treasury yields, economic indicators, FX rates, policy rates, and stock prices."
 tables:
-  - name: treasury_yields
+  - name: TREASURY_YIELDS
+    description: "US Treasury par yield curve rates across maturities"
     base_table:
       database: ORBIT_DEMO
       schema: MARKET_DATA
       table: FACT_TREASURY_YIELDS
     primary_key:
-      columns: [YIELD_ID]
-    time_dimensions:
-      - name: date
+      columns:
+        - YIELD_ID
+    dimensions:
+      - name: DATE
         expr: DATE
         data_type: DATE
-    dimensions:
-      - name: maturity_code
+      - name: MATURITY_CODE
         expr: MATURITY_CODE
         data_type: VARCHAR
-      - name: maturity_label
+      - name: MATURITY_LABEL
         expr: MATURITY_LABEL
         data_type: VARCHAR
     facts:
-      - name: yield_pct
+      - name: YIELD_PCT
         expr: YIELD_PCT
         data_type: FLOAT
-        access_modifier: public_access
-  - name: economic_indicators
+  - name: ECONOMIC_INDICATORS
+    description: "US economic indicators (GDP, CPI, unemployment, fed funds)"
     base_table:
       database: ORBIT_DEMO
       schema: MARKET_DATA
       table: FACT_ECONOMIC_INDICATORS
     primary_key:
-      columns: [INDICATOR_ID]
-    time_dimensions:
-      - name: date
+      columns:
+        - INDICATOR_ID
+    dimensions:
+      - name: DATE
         expr: DATE
         data_type: DATE
-    dimensions:
-      - name: indicator_name
+      - name: INDICATOR_NAME
         expr: INDICATOR_NAME
         data_type: VARCHAR
-      - name: indicator_category
+      - name: INDICATOR_CATEGORY
         expr: INDICATOR_CATEGORY
         data_type: VARCHAR
-      - name: unit
+      - name: UNIT
         expr: UNIT
         data_type: VARCHAR
     facts:
-      - name: value
+      - name: VALUE
         expr: VALUE
         data_type: FLOAT
-        access_modifier: public_access
-  - name: fx_rates
+  - name: FX_RATES
+    description: "Foreign exchange rates vs USD"
     base_table:
       database: ORBIT_DEMO
       schema: MARKET_DATA
       table: FACT_FX_RATES
     primary_key:
-      columns: [FX_ID]
-    time_dimensions:
-      - name: date
+      columns:
+        - FX_ID
+    dimensions:
+      - name: DATE
         expr: DATE
         data_type: DATE
-    dimensions:
-      - name: currency_pair
+      - name: CURRENCY_PAIR
         expr: CURRENCY_PAIR
         data_type: VARCHAR
-      - name: quote_currency
+      - name: QUOTE_CURRENCY
         expr: QUOTE_CURRENCY
         data_type: VARCHAR
     facts:
-      - name: exchange_rate
+      - name: EXCHANGE_RATE
         expr: EXCHANGE_RATE
         data_type: FLOAT
-        access_modifier: public_access
-  - name: policy_rates
+  - name: POLICY_RATES
+    description: "Central bank policy rates by country"
     base_table:
       database: ORBIT_DEMO
       schema: MARKET_DATA
       table: FACT_POLICY_RATES
     primary_key:
-      columns: [RATE_ID]
-    time_dimensions:
-      - name: date
+      columns:
+        - RATE_ID
+    dimensions:
+      - name: DATE
         expr: DATE
         data_type: DATE
-    dimensions:
-      - name: rate_name
+      - name: RATE_NAME
         expr: RATE_NAME
         data_type: VARCHAR
-      - name: country
+      - name: COUNTRY
         expr: COUNTRY
         data_type: VARCHAR
     facts:
-      - name: rate_pct
+      - name: RATE_PCT
         expr: RATE_PCT
         data_type: FLOAT
-        access_modifier: public_access
-  - name: stock_prices
+  - name: STOCK_PRICES
+    description: "Daily stock prices (OHLCV)"
     base_table:
       database: ORBIT_DEMO
       schema: MARKET_DATA
       table: FACT_STOCK_PRICES
     primary_key:
-      columns: [PRICE_ID]
-    time_dimensions:
-      - name: price_date
+      columns:
+        - PRICE_ID
+    dimensions:
+      - name: PRICE_DATE
         expr: PRICE_DATE
         data_type: DATE
-    dimensions:
-      - name: ticker
+      - name: TICKER
         expr: TICKER
         data_type: VARCHAR
-      - name: company_name
+      - name: COMPANY_NAME
         expr: COMPANY_NAME
         data_type: VARCHAR
-      - name: gics_sector
+      - name: GICS_SECTOR
         expr: GICS_SECTOR
         data_type: VARCHAR
     facts:
-      - name: price_open
-        expr: PRICE_OPEN
-        data_type: FLOAT
-        access_modifier: public_access
-      - name: price_close
+      - name: PRICE_CLOSE
         expr: PRICE_CLOSE
         data_type: FLOAT
-        access_modifier: public_access
-      - name: price_high
+      - name: PRICE_OPEN
+        expr: PRICE_OPEN
+        data_type: FLOAT
+      - name: PRICE_HIGH
         expr: PRICE_HIGH
         data_type: FLOAT
-        access_modifier: public_access
-      - name: price_low
+      - name: PRICE_LOW
         expr: PRICE_LOW
         data_type: FLOAT
-        access_modifier: public_access
-      - name: volume
+      - name: VOLUME
         expr: VOLUME
         data_type: NUMBER
-        access_modifier: public_access
-verified_queries:
-  - name: latest_yield_curve
-    question: "Show me the current US Treasury yield curve"
-    sql: "SELECT MATURITY_CODE, YIELD_PCT FROM __treasury_yields WHERE DATE = (SELECT MAX(DATE) FROM __treasury_yields) ORDER BY YIELD_PCT"
-    use_as_onboarding_question: true
-  - name: fed_funds
-    question: "What is the current federal funds rate?"
-    sql: "SELECT DATE, VALUE FROM __economic_indicators WHERE INDICATOR_CATEGORY = ''INTEREST_RATE'' ORDER BY DATE DESC LIMIT 5"
-    use_as_onboarding_question: true
-';
+    metrics:
+      - name: LATEST_CLOSE
+        expr: MAX(PRICE_CLOSE)
+      - name: AVG_VOLUME
+        expr: AVG(VOLUME)
+  $$
+);
 
--- Research View — SEC financials, segments, insiders, institutional holdings
-CREATE OR REPLACE SEMANTIC VIEW ORBIT_RESEARCH_VIEW
-  COMMENT = 'Company research: SEC financials, segments, insider trading, institutional holdings'
-  DISTRIBUTION = 'PUBLIC'
-  AS '
+-- ---------------------------------------------------------------------------
+-- 2. ORBIT_RESEARCH_VIEW — SEC financials, insiders, institutional holdings
+-- ---------------------------------------------------------------------------
+CALL SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML(
+  'ORBIT_DEMO.AI',
+  $$
 name: ORBIT_RESEARCH_VIEW
-description: "Company research data covering SEC financials, revenue segments, insider trading, and institutional holdings."
+description: "Company research: SEC financials, insider trading, and institutional holdings."
 tables:
-  - name: issuers
+  - name: ISSUERS
+    description: "Company reference data"
     base_table:
       database: ORBIT_DEMO
       schema: CURATED
       table: DIM_ISSUER
     primary_key:
-      columns: [ISSUER_ID]
+      columns:
+        - ISSUER_ID
     dimensions:
-      - name: issuer_id
+      - name: ISSUER_ID
         expr: ISSUER_ID
-        data_type: INT
-      - name: ticker
+        data_type: NUMBER
+      - name: TICKER
         expr: TICKER
         data_type: VARCHAR
-      - name: company_name
+      - name: COMPANY_NAME
         expr: COMPANY_NAME
         data_type: VARCHAR
-      - name: gics_sector
+      - name: GICS_SECTOR
         expr: GICS_SECTOR
         data_type: VARCHAR
-  - name: financials
+      - name: CIK
+        expr: CIK
+        data_type: VARCHAR
+  - name: FINANCIALS
+    description: "Quarterly/annual financials from SEC XBRL filings"
     base_table:
       database: ORBIT_DEMO
       schema: MARKET_DATA
       table: FACT_SEC_FINANCIALS
     primary_key:
-      columns: [FINANCIAL_ID]
-    time_dimensions:
-      - name: period_end_date
+      columns:
+        - FINANCIAL_ID
+    dimensions:
+      - name: PERIOD_END_DATE
         expr: PERIOD_END_DATE
         data_type: DATE
-    dimensions:
-      - name: f_issuer_id
+      - name: F_ISSUER_ID
         expr: ISSUER_ID
-        data_type: INT
-      - name: f_ticker
+        data_type: NUMBER
+      - name: F_TICKER
         expr: TICKER
         data_type: VARCHAR
-      - name: fiscal_period
+      - name: FISCAL_PERIOD
         expr: FISCAL_PERIOD
         data_type: VARCHAR
     facts:
-      - name: revenue
+      - name: REVENUE
         expr: REVENUE
         data_type: FLOAT
-        access_modifier: public_access
-      - name: net_income
+      - name: NET_INCOME
         expr: NET_INCOME
         data_type: FLOAT
-        access_modifier: public_access
-      - name: operating_income
+      - name: OPERATING_INCOME
         expr: OPERATING_INCOME
         data_type: FLOAT
-        access_modifier: public_access
-      - name: eps_basic
+      - name: EPS_BASIC
         expr: EPS_BASIC
         data_type: FLOAT
-        access_modifier: public_access
-      - name: gross_margin_pct
+      - name: GROSS_MARGIN_PCT
         expr: GROSS_MARGIN_PCT
         data_type: FLOAT
-        access_modifier: public_access
-      - name: operating_margin_pct
+      - name: OPERATING_MARGIN_PCT
         expr: OPERATING_MARGIN_PCT
         data_type: FLOAT
-        access_modifier: public_access
-      - name: roe_pct
+      - name: NET_MARGIN_PCT
+        expr: NET_MARGIN_PCT
+        data_type: FLOAT
+      - name: ROE_PCT
         expr: ROE_PCT
         data_type: FLOAT
-        access_modifier: public_access
-      - name: free_cash_flow
+      - name: FREE_CASH_FLOW
         expr: FREE_CASH_FLOW
         data_type: FLOAT
-        access_modifier: public_access
-  - name: insider_transactions
+      - name: DEBT_TO_EQUITY
+        expr: DEBT_TO_EQUITY
+        data_type: FLOAT
+  - name: INSIDER_TRANSACTIONS
+    description: "SEC Form 4 insider trading"
     base_table:
       database: ORBIT_DEMO
       schema: MARKET_DATA
       table: FACT_INSIDER_TRANSACTIONS
     primary_key:
-      columns: [INSIDER_TX_ID]
-    time_dimensions:
-      - name: transaction_date
+      columns:
+        - INSIDER_TX_ID
+    dimensions:
+      - name: TRANSACTION_DATE
         expr: TRANSACTION_DATE
         data_type: DATE
-    dimensions:
-      - name: it_issuer_id
+      - name: IT_ISSUER_ID
         expr: ISSUER_ID
-        data_type: INT
-      - name: it_ticker
+        data_type: NUMBER
+      - name: IT_TICKER
         expr: TICKER
         data_type: VARCHAR
-      - name: transaction_type
+      - name: TRANSACTION_TYPE
         expr: TRANSACTION_TYPE
         data_type: VARCHAR
     facts:
-      - name: transaction_shares
+      - name: TRANSACTION_SHARES
         expr: TRANSACTION_SHARES
         data_type: FLOAT
-        access_modifier: public_access
-      - name: transaction_price
+      - name: TRANSACTION_PRICE
         expr: TRANSACTION_PRICE_PER_SHARE
         data_type: FLOAT
-        access_modifier: public_access
-  - name: institutional_holdings
+  - name: INSTITUTIONAL_HOLDINGS
+    description: "SEC 13F institutional ownership"
     base_table:
       database: ORBIT_DEMO
       schema: MARKET_DATA
       table: FACT_INSTITUTIONAL_HOLDINGS
     primary_key:
-      columns: [HOLDING_ID]
-    time_dimensions:
-      - name: filing_date
+      columns:
+        - HOLDING_ID
+    dimensions:
+      - name: FILING_DATE
         expr: FILING_DATE
         data_type: DATE
-    dimensions:
-      - name: ih_issuer_id
+      - name: IH_ISSUER_ID
         expr: ISSUER_ID
-        data_type: INT
-      - name: ih_ticker
+        data_type: NUMBER
+      - name: IH_TICKER
         expr: TICKER
         data_type: VARCHAR
-      - name: institution_name
+      - name: INSTITUTION_NAME
         expr: INSTITUTION_NAME
         data_type: VARCHAR
     facts:
-      - name: market_value_usd
+      - name: MARKET_VALUE_USD
         expr: MARKET_VALUE_USD
         data_type: FLOAT
-        access_modifier: public_access
-      - name: shares_held
+      - name: SHARES_HELD
         expr: SHARES_HELD
         data_type: FLOAT
-        access_modifier: public_access
 relationships:
-  - name: financials_to_issuers
-    left_table: financials
-    right_table: issuers
+  - name: FINANCIALS_TO_ISSUERS
+    left_table: FINANCIALS
+    right_table: ISSUERS
     relationship_columns:
-      - left_column: f_issuer_id
-        right_column: issuer_id
-  - name: insider_to_issuers
-    left_table: insider_transactions
-    right_table: issuers
+      - left_column: F_ISSUER_ID
+        right_column: ISSUER_ID
+  - name: INSIDER_TO_ISSUERS
+    left_table: INSIDER_TRANSACTIONS
+    right_table: ISSUERS
     relationship_columns:
-      - left_column: it_issuer_id
-        right_column: issuer_id
-  - name: holdings_to_issuers
-    left_table: institutional_holdings
-    right_table: issuers
+      - left_column: IT_ISSUER_ID
+        right_column: ISSUER_ID
+  - name: HOLDINGS_TO_ISSUERS
+    left_table: INSTITUTIONAL_HOLDINGS
+    right_table: ISSUERS
     relationship_columns:
-      - left_column: ih_issuer_id
-        right_column: issuer_id
-verified_queries:
-  - name: apple_revenue
-    question: "Show Apple quarterly revenue trend"
-    sql: "SELECT period_end_date, revenue, net_income, operating_margin_pct FROM __financials WHERE f_ticker = ''AAPL'' AND fiscal_period = ''Q'' ORDER BY period_end_date DESC LIMIT 8"
-    use_as_onboarding_question: true
-  - name: tesla_insiders
-    question: "Recent insider trading for Tesla"
-    sql: "SELECT transaction_date, transaction_type, transaction_shares, transaction_price FROM __insider_transactions WHERE it_ticker = ''TSLA'' ORDER BY transaction_date DESC LIMIT 20"
-    use_as_onboarding_question: true
-';
+      - left_column: IH_ISSUER_ID
+        right_column: ISSUER_ID
+  $$
+);
 
--- Portfolio View — holdings, allocation, performance
-CREATE OR REPLACE SEMANTIC VIEW ORBIT_PORTFOLIO_VIEW
-  COMMENT = 'Portfolio analytics: holdings, allocation, performance, benchmark comparison'
-  DISTRIBUTION = 'PUBLIC'
-  AS '
+-- ---------------------------------------------------------------------------
+-- 3. ORBIT_PORTFOLIO_VIEW — Holdings, allocation, performance
+-- ---------------------------------------------------------------------------
+CALL SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML(
+  'ORBIT_DEMO.AI',
+  $$
 name: ORBIT_PORTFOLIO_VIEW
-description: "Portfolio analytics covering holdings, weights, sector allocation, and performance."
+description: "Portfolio analytics: holdings, weights, sector allocation, and performance."
 tables:
-  - name: portfolios
+  - name: PORTFOLIOS
+    description: "ORBIT model portfolio definitions"
     base_table:
       database: ORBIT_DEMO
       schema: CURATED
       table: DIM_PORTFOLIO
     primary_key:
-      columns: [PORTFOLIO_ID]
+      columns:
+        - PORTFOLIO_ID
     dimensions:
-      - name: portfolio_id
+      - name: PORTFOLIO_ID
         expr: PORTFOLIO_ID
-        data_type: INT
-      - name: portfolio_name
+        data_type: NUMBER
+      - name: PORTFOLIO_NAME
         expr: PORTFOLIO_NAME
         data_type: VARCHAR
-      - name: benchmark_name
+      - name: BENCHMARK_NAME
         expr: BENCHMARK_NAME
         data_type: VARCHAR
-      - name: strategy
+      - name: STRATEGY
         expr: STRATEGY
         data_type: VARCHAR
     facts:
-      - name: aum_usd
+      - name: AUM_USD
         expr: AUM_USD
         data_type: FLOAT
-        access_modifier: public_access
-  - name: positions
+  - name: POSITIONS
+    description: "Portfolio positions with weights and values"
     base_table:
       database: ORBIT_DEMO
       schema: CURATED
       table: FACT_POSITION_DAILY
     primary_key:
-      columns: [POSITION_ID]
-    time_dimensions:
-      - name: as_of_date
+      columns:
+        - POSITION_ID
+    dimensions:
+      - name: AS_OF_DATE
         expr: AS_OF_DATE
         data_type: DATE
-    dimensions:
-      - name: pos_portfolio_id
+      - name: POS_PORTFOLIO_ID
         expr: PORTFOLIO_ID
-        data_type: INT
-      - name: pos_ticker
+        data_type: NUMBER
+      - name: POS_TICKER
         expr: TICKER
         data_type: VARCHAR
     facts:
-      - name: weight
+      - name: WEIGHT
         expr: WEIGHT
         data_type: FLOAT
-        access_modifier: public_access
-      - name: shares
+      - name: SHARES
         expr: SHARES
         data_type: NUMBER
-        access_modifier: public_access
-      - name: position_value_usd
+      - name: CURRENT_PRICE
+        expr: CURRENT_PRICE
+        data_type: FLOAT
+      - name: POSITION_VALUE_USD
         expr: POSITION_VALUE_USD
         data_type: FLOAT
-        access_modifier: public_access
-  - name: issuers
+    metrics:
+      - name: TOTAL_POSITIONS
+        expr: COUNT(DISTINCT TICKER)
+      - name: TOTAL_MARKET_VALUE
+        expr: SUM(POSITION_VALUE_USD)
+  - name: ISSUERS
+    description: "Company reference for enriching positions"
     base_table:
       database: ORBIT_DEMO
       schema: CURATED
       table: DIM_ISSUER
     primary_key:
-      columns: [ISSUER_ID]
+      columns:
+        - ISSUER_ID
     dimensions:
-      - name: issuer_id
+      - name: ISSUER_ID
         expr: ISSUER_ID
-        data_type: INT
-      - name: ticker
+        data_type: NUMBER
+      - name: TICKER
         expr: TICKER
         data_type: VARCHAR
-      - name: company_name
+      - name: COMPANY_NAME
         expr: COMPANY_NAME
         data_type: VARCHAR
-      - name: gics_sector
+      - name: GICS_SECTOR
         expr: GICS_SECTOR
         data_type: VARCHAR
 relationships:
-  - name: positions_to_portfolios
-    left_table: positions
-    right_table: portfolios
+  - name: POSITIONS_TO_PORTFOLIOS
+    left_table: POSITIONS
+    right_table: PORTFOLIOS
     relationship_columns:
-      - left_column: pos_portfolio_id
-        right_column: portfolio_id
-  - name: positions_to_issuers
-    left_table: positions
-    right_table: issuers
+      - left_column: POS_PORTFOLIO_ID
+        right_column: PORTFOLIO_ID
+  - name: POSITIONS_TO_ISSUERS
+    left_table: POSITIONS
+    right_table: ISSUERS
     relationship_columns:
-      - left_column: pos_ticker
-        right_column: ticker
-verified_queries:
-  - name: tech_portfolio_top_10
-    question: "Top 10 holdings in ORBIT Technology portfolio"
-    sql: "SELECT pos_ticker, i.company_name, i.gics_sector, weight, position_value_usd FROM __positions p JOIN __issuers i ON p.pos_ticker = i.ticker JOIN __portfolios pf ON p.pos_portfolio_id = pf.portfolio_id WHERE pf.portfolio_name = ''ORBIT Technology & Infrastructure'' ORDER BY weight DESC LIMIT 10"
-    use_as_onboarding_question: true
-  - name: sector_allocation
-    question: "Sector allocation of ORBIT US Core Equity"
-    sql: "SELECT i.gics_sector, SUM(weight) AS sector_weight, COUNT(*) AS num_holdings FROM __positions p JOIN __issuers i ON p.pos_ticker = i.ticker JOIN __portfolios pf ON p.pos_portfolio_id = pf.portfolio_id WHERE pf.portfolio_name = ''ORBIT US Core Equity'' GROUP BY i.gics_sector ORDER BY sector_weight DESC"
-    use_as_onboarding_question: true
-';
+      - left_column: POS_TICKER
+        right_column: TICKER
+  $$
+);
