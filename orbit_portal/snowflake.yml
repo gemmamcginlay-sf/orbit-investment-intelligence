@@ -1,0 +1,17 @@
+definition_version: 2
+entities:
+  streamlit_app:
+    type: streamlit
+    main_file: streamlit_app.py
+    artifacts:
+      - pyproject.toml
+      - streamlit_app.py
+      - .streamlit/config.toml
+      - .streamlit/orbit_logo_dark_horizontal.png
+      - .streamlit/orbit_logo_dark_square.png
+      - .streamlit/orbit_logo_light_horizontal.png
+      - .streamlit/orbit_logo_light_square.png
+      - pages/1_Market_Intelligence.py
+      - pages/2_Research_Hub.py
+      - pages/3_Portfolio.py
+      - pages/4_AI_Agents.py
