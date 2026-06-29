@@ -1,2 +1,0 @@
-[tool.streamlit]
-main_file = "streamlit_app.py"

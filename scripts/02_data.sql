@@ -1,5 +1,5 @@
--- ============================================================================
 -- ORBIT Investment Intelligence — Data Layer (Dimensions + Market Data + Derived)
+-- Co-authored with CoCo
 -- ============================================================================
 -- Single script for ALL data objects. Ordered by dependency:
 --   1. Dimensions (DIM_ISSUER, DIM_SECURITY, DIM_PORTFOLIO, DIM_BENCHMARK)
@@ -70,16 +70,16 @@ with_sector AS (
         COALESCE(cd.COUNTRY, 'US') AS COUNTRY,
         -- Map SIC descriptions to GICS-like sectors
         CASE
-            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%software%','%computer%','%semiconductor%','%data processing%','%electronic%') THEN 'Information Technology'
-            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%pharmaceutical%','%biological%','%medical%','%surgical%','%health%','%drug%') THEN 'Health Care'
-            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%bank%','%insurance%','%investment%','%securities%','%finance%','%credit%') THEN 'Financials'
-            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%retail%','%automobile%','%apparel%','%restaurant%','%eating%','%hotel%','%entertainment%') THEN 'Consumer Discretionary'
-            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%food%','%beverage%','%tobacco%','%household%','%grocery%') THEN 'Consumer Staples'
-            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%oil%','%gas%','%petroleum%','%crude%','%coal%','%drilling%','%refin%') THEN 'Energy'
-            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%aerospace%','%defense%','%construction%','%machinery%','%transportation%','%freight%','%trucking%') THEN 'Industrials'
-            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%telecom%','%wireless%','%broadcast%','%cable%','%communication%') THEN 'Communication Services'
-            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%electric service%','%water%','%natural gas%','%power%','%utility%') THEN 'Utilities'
-            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%chemical%','%metal%','%mining%','%paper%','%steel%','%gold%') THEN 'Materials'
+            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%software%','%computer%','%semiconductor%','%data processing%','%electronic%','%business services%') THEN 'Information Technology'
+            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%pharmaceutical%','%biological%','%medical%','%surgical%','%health%','%drug%','%hospital%') THEN 'Health Care'
+            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%bank%','%insurance%','%investment%','%securities%','%finance%','%credit%','%loan%','%savings%') THEN 'Financials'
+            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%retail%','%automobile%','%motor vehicle%','%apparel%','%restaurant%','%eating%','%hotel%','%entertainment%','%catalog%','%mail-order%','%variety store%','%department store%','%general merchandise%','%e-commerce%','%home furnish%','%sporting%','%toy%','%hobby%','%book%','%leisure%') THEN 'Consumer Discretionary'
+            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%food%','%beverage%','%tobacco%','%household%','%grocery%','%soap%','%cleaning%','%personal product%') THEN 'Consumer Staples'
+            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%oil%','%gas%','%petroleum%','%crude%','%coal%','%drilling%','%refin%','%pipeline%') THEN 'Energy'
+            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%aerospace%','%defense%','%construction%','%machinery%','%transportation%','%freight%','%trucking%','%railroad%','%airline%','%air transport%','%waste%','%consult%') THEN 'Industrials'
+            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%telecom%','%wireless%','%broadcast%','%cable%','%communication%','%publishing%','%motion picture%','%television%') THEN 'Communication Services'
+            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%electric service%','%water supply%','%natural gas dist%','%power%','%utility%','%electric%gas%') THEN 'Utilities'
+            WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%chemical%','%metal%','%mining%','%paper%','%steel%','%gold%','%copper%','%aluminum%','%lumber%') THEN 'Materials'
             WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%real estate%','%reit%') THEN 'Real Estate'
             ELSE 'Other'
         END AS GICS_SECTOR
@@ -100,8 +100,7 @@ SELECT
     PRIMARY_EXCHANGE_CODE AS EXCHANGE,
     'SNOWFLAKE_PUBLIC_DATA_PAID' AS DATA_SOURCE,
     CURRENT_TIMESTAMP() AS LOADED_AT
-FROM with_sector
-WHERE GICS_SECTOR != 'Other';
+FROM with_sector;
 
 -- ---------------------------------------------------------------------------
 -- 1.2 DIM_SECURITY — One equity per issuer
@@ -199,7 +198,8 @@ sec_raw AS (
       AND VALUE IS NOT NULL AND TRY_CAST(VALUE AS FLOAT) IS NOT NULL
       AND TAG IN (
           'Revenues','RevenueFromContractWithCustomerExcludingAssessedTax',
-          'NetIncomeLoss','GrossProfit','OperatingIncomeLoss',
+          'NetIncomeLoss','GrossProfit','CostOfRevenue','CostOfGoodsAndServicesSold',
+          'OperatingIncomeLoss',
           'EarningsPerShareBasic','EarningsPerShareDiluted',
           'ResearchAndDevelopmentExpense','InterestExpense',
           'Assets','Liabilities','StockholdersEquity',
@@ -218,6 +218,7 @@ pivoted AS (
         MAX(CASE WHEN TAG IN ('Revenues','RevenueFromContractWithCustomerExcludingAssessedTax') THEN VALUE_NUM END) AS REVENUE,
         MAX(CASE WHEN TAG='NetIncomeLoss' THEN VALUE_NUM END) AS NET_INCOME,
         MAX(CASE WHEN TAG='GrossProfit' THEN VALUE_NUM END) AS GROSS_PROFIT,
+        MAX(CASE WHEN TAG IN ('CostOfRevenue','CostOfGoodsAndServicesSold') THEN VALUE_NUM END) AS COST_OF_REVENUE,
         MAX(CASE WHEN TAG='OperatingIncomeLoss' THEN VALUE_NUM END) AS OPERATING_INCOME,
         MAX(CASE WHEN TAG='EarningsPerShareBasic' THEN VALUE_NUM END) AS EPS_BASIC,
         MAX(CASE WHEN TAG='EarningsPerShareDiluted' THEN VALUE_NUM END) AS EPS_DILUTED,
@@ -252,7 +253,7 @@ SELECT
     d.TOTAL_ASSETS, d.TOTAL_LIABILITIES, d.TOTAL_EQUITY,
     d.CASH_AND_EQUIVALENTS, d.LONG_TERM_DEBT,
     d.OPERATING_CASH_FLOW, d.FINANCING_CASH_FLOW, d.CAPEX, d.DEPRECIATION, d.SHARES_OUTSTANDING,
-    CASE WHEN d.REVENUE > 0 THEN ROUND(d.GROSS_PROFIT / d.REVENUE * 100, 2) END AS GROSS_MARGIN_PCT,
+    CASE WHEN d.REVENUE > 0 THEN ROUND(COALESCE(d.GROSS_PROFIT, d.REVENUE - d.COST_OF_REVENUE) / d.REVENUE * 100, 2) END AS GROSS_MARGIN_PCT,
     CASE WHEN d.REVENUE > 0 THEN ROUND(d.OPERATING_INCOME / d.REVENUE * 100, 2) END AS OPERATING_MARGIN_PCT,
     CASE WHEN d.REVENUE > 0 THEN ROUND(d.NET_INCOME / d.REVENUE * 100, 2) END AS NET_MARGIN_PCT,
     CASE WHEN d.TOTAL_EQUITY > 0 THEN ROUND(d.NET_INCOME / d.TOTAL_EQUITY * 100, 2) END AS ROE_PCT,
@@ -283,15 +284,43 @@ WHERE s.PERIOD_END_DATE >= DATEADD(YEAR, -3, CURRENT_DATE()) AND s.VALUE IS NOT 
 CREATE OR REPLACE TABLE FACT_TREASURY_YIELDS AS
 SELECT
     ROW_NUMBER() OVER (ORDER BY t.DATE, a.VARIABLE_NAME) AS YIELD_ID,
-    t.DATE, a.VARIABLE_NAME AS MATURITY_LABEL,
+    t.DATE,
+    -- Clean maturity label for chart display
+    REPLACE(REPLACE(a.VARIABLE_NAME, 'Treasury Par Yield Curve Rate: ', ''), ' Maturity', '') AS MATURITY_LABEL,
     CASE
-        WHEN a.VARIABLE_NAME LIKE '%1 Mo%' THEN '1M' WHEN a.VARIABLE_NAME LIKE '%3 Mo%' THEN '3M'
-        WHEN a.VARIABLE_NAME LIKE '%6 Mo%' THEN '6M' WHEN a.VARIABLE_NAME LIKE '%1 Yr%' THEN '1Y'
-        WHEN a.VARIABLE_NAME LIKE '%2 Yr%' THEN '2Y' WHEN a.VARIABLE_NAME LIKE '%5 Yr%' THEN '5Y'
-        WHEN a.VARIABLE_NAME LIKE '%7 Yr%' THEN '7Y' WHEN a.VARIABLE_NAME LIKE '%10 Yr%' THEN '10Y'
-        WHEN a.VARIABLE_NAME LIKE '%20 Yr%' THEN '20Y' WHEN a.VARIABLE_NAME LIKE '%30 Yr%' THEN '30Y'
+        WHEN a.VARIABLE_NAME LIKE '%1-MO%' OR a.VARIABLE_NAME LIKE '%1 Mo%' THEN '1M'
+        WHEN a.VARIABLE_NAME LIKE '%1.5-MO%' THEN '1.5M'
+        WHEN a.VARIABLE_NAME LIKE '%2-MO%' OR a.VARIABLE_NAME LIKE '%2 Mo%' THEN '2M'
+        WHEN a.VARIABLE_NAME LIKE '%3-MO%' OR a.VARIABLE_NAME LIKE '%3 Mo%' THEN '3M'
+        WHEN a.VARIABLE_NAME LIKE '%4-MO%' OR a.VARIABLE_NAME LIKE '%4 Mo%' THEN '4M'
+        WHEN a.VARIABLE_NAME LIKE '%6-MO%' OR a.VARIABLE_NAME LIKE '%6 Mo%' THEN '6M'
+        WHEN a.VARIABLE_NAME LIKE '%1-YR%' OR a.VARIABLE_NAME LIKE '%1 Yr%' THEN '1Y'
+        WHEN a.VARIABLE_NAME LIKE '%2-YR%' OR a.VARIABLE_NAME LIKE '%2 Yr%' THEN '2Y'
+        WHEN a.VARIABLE_NAME LIKE '%3-YR%' OR a.VARIABLE_NAME LIKE '%3 Yr%' THEN '3Y'
+        WHEN a.VARIABLE_NAME LIKE '%5-YR%' OR a.VARIABLE_NAME LIKE '%5 Yr%' THEN '5Y'
+        WHEN a.VARIABLE_NAME LIKE '%7-YR%' OR a.VARIABLE_NAME LIKE '%7 Yr%' THEN '7Y'
+        WHEN a.VARIABLE_NAME LIKE '%10-YR%' OR a.VARIABLE_NAME LIKE '%10 Yr%' THEN '10Y'
+        WHEN a.VARIABLE_NAME LIKE '%20-YR%' OR a.VARIABLE_NAME LIKE '%20 Yr%' THEN '20Y'
+        WHEN a.VARIABLE_NAME LIKE '%30-YR%' OR a.VARIABLE_NAME LIKE '%30 Yr%' THEN '30Y'
         ELSE 'OTHER'
     END AS MATURITY_CODE,
+    CASE
+        WHEN a.VARIABLE_NAME LIKE '%1-MO%' OR a.VARIABLE_NAME LIKE '%1 Mo%' THEN 1
+        WHEN a.VARIABLE_NAME LIKE '%1.5-MO%' THEN 2
+        WHEN a.VARIABLE_NAME LIKE '%2-MO%' OR a.VARIABLE_NAME LIKE '%2 Mo%' THEN 2
+        WHEN a.VARIABLE_NAME LIKE '%3-MO%' OR a.VARIABLE_NAME LIKE '%3 Mo%' THEN 3
+        WHEN a.VARIABLE_NAME LIKE '%4-MO%' OR a.VARIABLE_NAME LIKE '%4 Mo%' THEN 4
+        WHEN a.VARIABLE_NAME LIKE '%6-MO%' OR a.VARIABLE_NAME LIKE '%6 Mo%' THEN 6
+        WHEN a.VARIABLE_NAME LIKE '%1-YR%' OR a.VARIABLE_NAME LIKE '%1 Yr%' THEN 12
+        WHEN a.VARIABLE_NAME LIKE '%2-YR%' OR a.VARIABLE_NAME LIKE '%2 Yr%' THEN 24
+        WHEN a.VARIABLE_NAME LIKE '%3-YR%' OR a.VARIABLE_NAME LIKE '%3 Yr%' THEN 36
+        WHEN a.VARIABLE_NAME LIKE '%5-YR%' OR a.VARIABLE_NAME LIKE '%5 Yr%' THEN 60
+        WHEN a.VARIABLE_NAME LIKE '%7-YR%' OR a.VARIABLE_NAME LIKE '%7 Yr%' THEN 84
+        WHEN a.VARIABLE_NAME LIKE '%10-YR%' OR a.VARIABLE_NAME LIKE '%10 Yr%' THEN 120
+        WHEN a.VARIABLE_NAME LIKE '%20-YR%' OR a.VARIABLE_NAME LIKE '%20 Yr%' THEN 240
+        WHEN a.VARIABLE_NAME LIKE '%30-YR%' OR a.VARIABLE_NAME LIKE '%30 Yr%' THEN 360
+        ELSE 999
+    END AS MATURITY_MONTHS,
     t.VALUE AS YIELD_PCT, 'US_TREASURY' AS DATA_SOURCE, CURRENT_TIMESTAMP() AS LOADED_AT
 FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.US_TREASURY_TIMESERIES t
 JOIN SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.US_TREASURY_ATTRIBUTES a ON t.VARIABLE = a.VARIABLE

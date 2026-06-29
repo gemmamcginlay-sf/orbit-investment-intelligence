@@ -1,5 +1,5 @@
--- ============================================================================
 -- ORBIT Investment Intelligence — Cortex Search Services
+-- Co-authored with CoCo
 -- ============================================================================
 -- Points search services directly at source data (no staging tables needed).
 -- Uses LARGE warehouse for initial indexing — scale down after creation.
@@ -26,7 +26,8 @@ CREATE OR REPLACE CORTEX SEARCH SERVICE ORBIT_SEC_FILINGS_SEARCH
     WITH our_filings AS (
         SELECT DISTINCT sra.ADSH, sra.CIK
         FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.SEC_CORPORATE_REPORT_ATTRIBUTES sra
-        WHERE sra.CIK IN (SELECT CIK FROM ORBIT_DEMO.CURATED.DIM_ISSUER WHERE CIK IS NOT NULL)
+        JOIN ORBIT_DEMO.CURATED.DIM_ISSUER di ON sra.CIK = di.CIK
+        WHERE di.CIK IS NOT NULL
           AND sra.PERIOD_END_DATE >= DATEADD(YEAR, -2, CURRENT_DATE())
     )
     SELECT

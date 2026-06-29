@@ -1,6 +1,8 @@
 # ORBIT Market Intelligence — macro overview + UK and FX focus
 # Co-authored with CoCo
 import streamlit as st
+import pandas as pd
+import altair as alt
 
 conn = st.session_state.conn
 
@@ -8,7 +10,7 @@ conn = st.session_state.conn
 @st.cache_data(ttl=300)
 def get_yield_curve():
     return conn.query("""
-        SELECT MATURITY_LABEL, YIELD_PCT
+        SELECT MATURITY_LABEL, YIELD_PCT, MATURITY_MONTHS
         FROM ORBIT_DEMO.MARKET_DATA.FACT_TREASURY_YIELDS
         WHERE DATE = (SELECT MAX(DATE) FROM ORBIT_DEMO.MARKET_DATA.FACT_TREASURY_YIELDS)
         ORDER BY MATURITY_MONTHS
@@ -20,7 +22,7 @@ def get_fx_rates():
     return conn.query("""
         SELECT QUOTE_CURRENCY, EXCHANGE_RATE, DATE
         FROM ORBIT_DEMO.MARKET_DATA.FACT_FX_RATES
-        WHERE DATE = (SELECT MAX(DATE) FROM ORBIT_DEMO.MARKET_DATA.FACT_FX_RATES)
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY QUOTE_CURRENCY ORDER BY DATE DESC) = 1
         ORDER BY QUOTE_CURRENCY
     """)
 
@@ -78,15 +80,17 @@ def get_economic_indicators_latest():
     return conn.query("""
         SELECT INDICATOR_NAME, INDICATOR_CATEGORY, VALUE, UNIT, DATE
         FROM ORBIT_DEMO.MARKET_DATA.FACT_ECONOMIC_INDICATORS
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY INDICATOR_CATEGORY ORDER BY DATE DESC) = 1
-        ORDER BY INDICATOR_CATEGORY
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY INDICATOR_NAME ORDER BY DATE DESC) = 1
+        ORDER BY INDICATOR_CATEGORY, INDICATOR_NAME
     """)
 
 
 @st.cache_data(ttl=300)
 def get_policy_rates():
     return conn.query("""
-        SELECT COUNTRY, RATE_NAME, RATE_PCT * 100 AS RATE_PCT, DATE
+        SELECT COUNTRY,
+               REGEXP_REPLACE(RATE_NAME, 'Central bank policy rates: |\\s*-\\s*End of period.*', '') AS RATE_NAME,
+               RATE_PCT * 100 AS RATE_PCT, DATE
         FROM ORBIT_DEMO.MARKET_DATA.FACT_POLICY_RATES
         QUALIFY ROW_NUMBER() OVER (PARTITION BY COUNTRY ORDER BY DATE DESC) = 1
         ORDER BY COUNTRY
@@ -101,7 +105,11 @@ with tab1:
         try:
             yields = get_yield_curve()
             if not yields.empty:
-                st.bar_chart(yields, x="MATURITY_LABEL", y="YIELD_PCT")
+                chart = alt.Chart(yields).mark_bar().encode(
+                    x=alt.X('MATURITY_LABEL', sort=None, title='Maturity'),
+                    y=alt.Y('YIELD_PCT', title='Yield %', scale=alt.Scale(zero=False)),
+                )
+                st.altair_chart(chart, use_container_width=True)
             else:
                 st.info("No yield curve data")
         except Exception as e:

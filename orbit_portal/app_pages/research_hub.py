@@ -27,6 +27,19 @@ def get_financials(ticker):
 
 
 @st.cache_data(ttl=300)
+def get_annual_financials(ticker):
+    return conn.query("""
+        SELECT PERIOD_END_DATE, REVENUE, NET_INCOME, OPERATING_INCOME,
+               EPS_BASIC, GROSS_MARGIN_PCT, OPERATING_MARGIN_PCT, NET_MARGIN_PCT,
+               ROE_PCT, FREE_CASH_FLOW, DEBT_TO_EQUITY
+        FROM ORBIT_DEMO.MARKET_DATA.FACT_SEC_FINANCIALS
+        WHERE TICKER = :1 AND FISCAL_PERIOD = 'FY'
+        ORDER BY PERIOD_END_DATE
+        LIMIT 5
+    """, params=[ticker])
+
+
+@st.cache_data(ttl=300)
 def get_price_history(ticker):
     return conn.query("""
         SELECT PRICE_DATE, PRICE_CLOSE, VOLUME
@@ -59,6 +72,19 @@ def get_holders(ticker):
     """, params=[ticker])
 
 
+@st.cache_data(ttl=600)
+def get_transcript_sentiment(ticker):
+    return conn.query("""
+        SELECT EVENT_DATE, EVENT_TYPE, FISCAL_YEAR, FISCAL_PERIOD,
+               SNOWFLAKE.CORTEX.SENTIMENT(LEFT(DOCUMENT_TEXT, 10000)) AS SENTIMENT_SCORE,
+               TEXT_LENGTH
+        FROM ORBIT_DEMO.RAW.EARNINGS_TRANSCRIPTS_CORPUS
+        WHERE TICKER = :1
+        ORDER BY EVENT_DATE DESC
+        LIMIT 12
+    """, params=[ticker])
+
+
 companies = get_companies()
 search_options = [f"{row['TICKER']} — {row['COMPANY_NAME']}" for _, row in companies.iterrows()]
 
@@ -78,48 +104,91 @@ if selected_option:
         st.metric("Ticker", ticker, border=True)
         st.metric("Sector", company_row['GICS_SECTOR'], border=True)
 
-    tab_price, tab_earnings, tab_margins, tab_insiders, tab_holders = st.tabs([
-        "Stock price", "Earnings", "Margins", "Insider trades", "Top holders"
+    tab_price, tab_earnings, tab_margins, tab_insiders, tab_holders, tab_sentiment = st.tabs([
+        "Stock price", "Earnings", "Margins", "Insider trades", "Top holders", "Sentiment"
     ])
 
     with tab_price:
         try:
             prices = get_price_history(ticker)
             if not prices.empty:
-                latest = prices.iloc[-1]['PRICE_CLOSE']
-                first = prices.iloc[0]['PRICE_CLOSE']
-                change_pct = ((latest - first) / first) * 100
-
-                # Find QoQ and YoY price comparisons
-                latest_date = pd.to_datetime(prices.iloc[-1]['PRICE_DATE'])
-                q_ago_date = latest_date - pd.DateOffset(months=3)
-                y_ago_date = latest_date - pd.DateOffset(years=1)
-
                 prices_dt = prices.copy()
                 prices_dt['PRICE_DATE'] = pd.to_datetime(prices_dt['PRICE_DATE'])
 
-                q_ago_row = prices_dt[prices_dt['PRICE_DATE'] <= q_ago_date]
-                y_ago_row = prices_dt[prices_dt['PRICE_DATE'] <= y_ago_date]
-                price_q_ago = q_ago_row.iloc[-1]['PRICE_CLOSE'] if not q_ago_row.empty else None
-                price_y_ago = y_ago_row.iloc[-1]['PRICE_CLOSE'] if not y_ago_row.empty else None
+                latest = prices_dt.iloc[-1]['PRICE_CLOSE']
+                latest_date = prices_dt.iloc[-1]['PRICE_DATE']
 
-                qoq_pct = ((latest - price_q_ago) / price_q_ago * 100) if price_q_ago else None
-                yoy_pct = ((latest - price_y_ago) / price_y_ago * 100) if price_y_ago else None
+                # Daily change (last two trading days)
+                if len(prices_dt) >= 2:
+                    prev_close = prices_dt.iloc[-2]['PRICE_CLOSE']
+                    daily_chg = latest - prev_close
+                    daily_pct = (daily_chg / prev_close) * 100
+                else:
+                    daily_chg = None
+                    daily_pct = None
+
+                # Period returns
+                w_ago = latest_date - pd.DateOffset(weeks=1)
+                m_ago = latest_date - pd.DateOffset(months=1)
+                q_ago = latest_date - pd.DateOffset(months=3)
+                y_ago = latest_date - pd.DateOffset(years=1)
+
+                def get_price_at(target_date):
+                    rows = prices_dt[prices_dt['PRICE_DATE'] <= target_date]
+                    return rows.iloc[-1]['PRICE_CLOSE'] if not rows.empty else None
+
+                price_1w = get_price_at(w_ago)
+                price_1m = get_price_at(m_ago)
+                price_3m = get_price_at(q_ago)
+                price_1y = get_price_at(y_ago)
+
+                def calc_return(current, past):
+                    if past and past != 0:
+                        return ((current - past) / past) * 100
+                    return None
+
+                ret_1w = calc_return(latest, price_1w)
+                ret_1m = calc_return(latest, price_1m)
+                ret_3m = calc_return(latest, price_3m)
+                ret_1y = calc_return(latest, price_1y)
+
+                # 52-week high/low
+                one_year_prices = prices_dt[prices_dt['PRICE_DATE'] > y_ago]
+                if not one_year_prices.empty:
+                    high_52w = one_year_prices['PRICE_CLOSE'].max()
+                    low_52w = one_year_prices['PRICE_CLOSE'].min()
+                    pct_from_high = ((latest - high_52w) / high_52w) * 100
+                else:
+                    high_52w = low_52w = pct_from_high = None
+
+                # Header: Latest price with daily change
+                with st.container(horizontal=True):
+                    st.metric(
+                        "Latest close",
+                        f"${latest:.2f}",
+                        f"{daily_chg:+.2f} ({daily_pct:+.1f}%) today" if daily_pct is not None else None,
+                        border=True,
+                    )
+                    if high_52w is not None:
+                        st.metric("52-week high", f"${high_52w:.2f}", f"{pct_from_high:+.1f}% from high", border=True)
+                        st.metric("52-week low", f"${low_52w:.2f}", border=True)
+
+                # Returns across time periods
+                st.markdown("**Performance**")
+                with st.container(horizontal=True):
+                    st.metric("1 week", f"{ret_1w:+.1f}%" if ret_1w is not None else "N/A", border=True)
+                    st.metric("1 month", f"{ret_1m:+.1f}%" if ret_1m is not None else "N/A", border=True)
+                    st.metric("3 months", f"{ret_3m:+.1f}%" if ret_3m is not None else "N/A", border=True)
+                    st.metric("1 year", f"{ret_1y:+.1f}%" if ret_1y is not None else "N/A", border=True)
+
+                # Volume summary
+                avg_vol_30d = prices_dt.tail(22)['VOLUME'].mean() if len(prices_dt) >= 22 else prices_dt['VOLUME'].mean()
+                latest_vol = prices_dt.iloc[-1]['VOLUME']
+                vol_vs_avg = ((latest_vol - avg_vol_30d) / avg_vol_30d) * 100 if avg_vol_30d else None
 
                 with st.container(horizontal=True):
-                    st.metric("Latest close", f"${latest:.2f}", f"{change_pct:+.1f}% (all)", border=True)
-                    st.metric(
-                        "3-month return",
-                        f"${latest:.2f}",
-                        f"{qoq_pct:+.1f}%" if qoq_pct is not None else "N/A",
-                        border=True,
-                    )
-                    st.metric(
-                        "1-year return",
-                        f"${latest:.2f}",
-                        f"{yoy_pct:+.1f}%" if yoy_pct is not None else "N/A",
-                        border=True,
-                    )
+                    st.metric("Latest volume", f"{latest_vol:,.0f}", f"{vol_vs_avg:+.0f}% vs 30d avg" if vol_vs_avg is not None else None, border=True)
+                    st.metric("30-day avg volume", f"{avg_vol_30d:,.0f}", border=True)
 
                 with st.container(border=True):
                     st.markdown("**Price history**")
@@ -136,66 +205,100 @@ if selected_option:
     with tab_earnings:
         try:
             fin = get_financials(ticker)
-            if not fin.empty:
-                # Comparison metrics: latest Q vs prior Q and same Q last year
-                if len(fin) >= 2:
-                    latest_q = fin.iloc[-1]
-                    prev_q = fin.iloc[-2]
-                    yoy_q = fin.iloc[-5] if len(fin) >= 5 else None
+            annual = get_annual_financials(ticker)
+
+            period_view = st.radio(
+                "Period", ["Quarterly", "YTD", "Annual"],
+                horizontal=True, key="earnings_period"
+            )
+
+            if period_view == "Annual":
+                data = annual
+                period_label = "Year"
+            elif period_view == "YTD":
+                if not fin.empty:
+                    fin_copy = fin.copy()
+                    fin_copy['PERIOD_END_DATE'] = pd.to_datetime(fin_copy['PERIOD_END_DATE'])
+                    fin_copy['YEAR'] = fin_copy['PERIOD_END_DATE'].dt.year
+                    ytd = fin_copy.groupby('YEAR').agg(
+                        PERIOD_END_DATE=('PERIOD_END_DATE', 'max'),
+                        REVENUE=('REVENUE', 'sum'),
+                        NET_INCOME=('NET_INCOME', 'sum'),
+                        OPERATING_INCOME=('OPERATING_INCOME', 'sum'),
+                        EPS_BASIC=('EPS_BASIC', 'sum'),
+                        FREE_CASH_FLOW=('FREE_CASH_FLOW', 'sum'),
+                        GROSS_MARGIN_PCT=('GROSS_MARGIN_PCT', 'mean'),
+                        OPERATING_MARGIN_PCT=('OPERATING_MARGIN_PCT', 'mean'),
+                        NET_MARGIN_PCT=('NET_MARGIN_PCT', 'mean'),
+                        ROE_PCT=('ROE_PCT', 'mean'),
+                    ).reset_index(drop=True).sort_values('PERIOD_END_DATE')
+                    data = ytd
+                else:
+                    data = pd.DataFrame()
+                period_label = "YTD"
+            else:
+                data = fin
+                period_label = "Quarter"
+
+            if not data.empty:
+                # Comparison metrics
+                if len(data) >= 2:
+                    latest_q = data.iloc[-1]
+                    prev_q = data.iloc[-2]
+                    yoy_q = data.iloc[-5] if len(data) >= 5 else (data.iloc[-2] if period_view != "Quarterly" else None)
 
                     def pct_change(new, old):
                         if old and old != 0:
                             return ((new - old) / abs(old)) * 100
                         return None
 
-                    rev_qoq = pct_change(latest_q['REVENUE'], prev_q['REVENUE'])
-                    rev_yoy = pct_change(latest_q['REVENUE'], yoy_q['REVENUE']) if yoy_q is not None else None
-                    ni_qoq = pct_change(latest_q['NET_INCOME'], prev_q['NET_INCOME'])
-                    ni_yoy = pct_change(latest_q['NET_INCOME'], yoy_q['NET_INCOME']) if yoy_q is not None else None
-                    eps_qoq = pct_change(latest_q['EPS_BASIC'], prev_q['EPS_BASIC'])
-                    eps_yoy = pct_change(latest_q['EPS_BASIC'], yoy_q['EPS_BASIC']) if yoy_q is not None else None
+                    if period_view == "Quarterly":
+                        comp_mode = st.radio(
+                            "Compare", ["vs Last Quarter (QoQ)", "vs Same Quarter Last Year (YoY)"],
+                            horizontal=True, key="earnings_comp"
+                        )
+                        compare_to = yoy_q if "YoY" in comp_mode else prev_q
+                        comp_label = "YoY" if "YoY" in comp_mode else "QoQ"
+                    else:
+                        compare_to = prev_q
+                        comp_label = "vs Prior Year"
 
-                    st.markdown("**Quarter comparisons**")
-                    comp_mode = st.radio(
-                        "Compare", ["vs Last Quarter (QoQ)", "vs Same Quarter Last Year (YoY)"],
-                        horizontal=True, key="earnings_comp"
-                    )
-                    is_yoy = "YoY" in comp_mode
+                    if compare_to is not None:
+                        rev_delta = pct_change(latest_q['REVENUE'], compare_to['REVENUE'])
+                        ni_delta = pct_change(latest_q['NET_INCOME'], compare_to['NET_INCOME'])
+                        eps_delta = pct_change(latest_q['EPS_BASIC'], compare_to['EPS_BASIC'])
 
-                    with st.container(horizontal=True):
-                        rev_delta = rev_yoy if is_yoy else rev_qoq
-                        st.metric(
-                            "Revenue", f"${latest_q['REVENUE']:,.0f}",
-                            f"{rev_delta:+.1f}%" if rev_delta is not None else "N/A",
-                            border=True,
-                        )
-                        ni_delta = ni_yoy if is_yoy else ni_qoq
-                        st.metric(
-                            "Net income", f"${latest_q['NET_INCOME']:,.0f}",
-                            f"{ni_delta:+.1f}%" if ni_delta is not None else "N/A",
-                            border=True,
-                        )
-                        eps_delta = eps_yoy if is_yoy else eps_qoq
-                        st.metric(
-                            "EPS", f"${latest_q['EPS_BASIC']:.2f}",
-                            f"{eps_delta:+.1f}%" if eps_delta is not None else "N/A",
-                            border=True,
-                        )
+                        with st.container(horizontal=True):
+                            st.metric(
+                                "Revenue", f"${latest_q['REVENUE']:,.0f}",
+                                f"{rev_delta:+.1f}% {comp_label}" if rev_delta is not None else "N/A",
+                                border=True,
+                            )
+                            st.metric(
+                                "Net income", f"${latest_q['NET_INCOME']:,.0f}",
+                                f"{ni_delta:+.1f}% {comp_label}" if ni_delta is not None else "N/A",
+                                border=True,
+                            )
+                            st.metric(
+                                "EPS", f"${latest_q['EPS_BASIC']:.2f}",
+                                f"{eps_delta:+.1f}% {comp_label}" if eps_delta is not None else "N/A",
+                                border=True,
+                            )
 
                 with st.container(border=True):
-                    st.markdown("**Revenue and net income**")
-                    st.line_chart(fin, x="PERIOD_END_DATE", y=["REVENUE", "NET_INCOME"])
+                    st.markdown(f"**Revenue and net income ({period_label})**")
+                    st.line_chart(data, x="PERIOD_END_DATE", y=["REVENUE", "NET_INCOME"])
 
                 with st.container(border=True):
-                    st.markdown("**EPS (basic)**")
-                    st.bar_chart(fin, x="PERIOD_END_DATE", y="EPS_BASIC")
+                    st.markdown(f"**EPS ({period_label})**")
+                    st.bar_chart(data, x="PERIOD_END_DATE", y="EPS_BASIC")
 
                 with st.container(border=True):
-                    st.markdown("**Detail**")
+                    st.markdown(f"**Detail ({period_label})**")
                     st.dataframe(
-                        fin,
+                        data,
                         column_config={
-                            "PERIOD_END_DATE": st.column_config.DateColumn("Quarter"),
+                            "PERIOD_END_DATE": st.column_config.DateColumn(period_label),
                             "REVENUE": st.column_config.NumberColumn("Revenue", format="$%,.0f"),
                             "NET_INCOME": st.column_config.NumberColumn("Net income", format="$%,.0f"),
                             "EPS_BASIC": st.column_config.NumberColumn("EPS", format="$%.2f"),
@@ -212,19 +315,46 @@ if selected_option:
     with tab_margins:
         try:
             fin = get_financials(ticker)
-            if not fin.empty:
-                # Margin comparisons
-                if len(fin) >= 2:
-                    latest_q = fin.iloc[-1]
-                    prev_q = fin.iloc[-2]
-                    yoy_q = fin.iloc[-5] if len(fin) >= 5 else None
+            annual = get_annual_financials(ticker)
 
-                    st.markdown("**Margin comparisons**")
-                    margin_comp = st.radio(
-                        "Compare", ["vs Last Quarter (QoQ)", "vs Same Quarter Last Year (YoY)"],
-                        horizontal=True, key="margin_comp"
-                    )
-                    compare_q = yoy_q if "YoY" in margin_comp else prev_q
+            margin_period = st.radio(
+                "Period", ["Quarterly", "YTD", "Annual"],
+                horizontal=True, key="margin_period"
+            )
+
+            if margin_period == "Annual":
+                mdata = annual
+            elif margin_period == "YTD":
+                if not fin.empty:
+                    fin_copy = fin.copy()
+                    fin_copy['PERIOD_END_DATE'] = pd.to_datetime(fin_copy['PERIOD_END_DATE'])
+                    fin_copy['YEAR'] = fin_copy['PERIOD_END_DATE'].dt.year
+                    mdata = fin_copy.groupby('YEAR').agg(
+                        PERIOD_END_DATE=('PERIOD_END_DATE', 'max'),
+                        GROSS_MARGIN_PCT=('GROSS_MARGIN_PCT', 'mean'),
+                        OPERATING_MARGIN_PCT=('OPERATING_MARGIN_PCT', 'mean'),
+                        NET_MARGIN_PCT=('NET_MARGIN_PCT', 'mean'),
+                        ROE_PCT=('ROE_PCT', 'mean'),
+                    ).reset_index(drop=True).sort_values('PERIOD_END_DATE')
+                else:
+                    mdata = pd.DataFrame()
+            else:
+                mdata = fin
+
+            if not mdata.empty:
+                if len(mdata) >= 2:
+                    latest_q = mdata.iloc[-1]
+                    prev_q = mdata.iloc[-2]
+                    yoy_q = mdata.iloc[-5] if len(mdata) >= 5 else None
+
+                    if margin_period == "Quarterly":
+                        margin_comp = st.radio(
+                            "Compare", ["vs Last Quarter (QoQ)", "vs Same Quarter Last Year (YoY)"],
+                            horizontal=True, key="margin_comp"
+                        )
+                        compare_q = yoy_q if "YoY" in margin_comp else prev_q
+                    else:
+                        compare_q = prev_q
 
                     if compare_q is not None:
                         gross_delta = latest_q['GROSS_MARGIN_PCT'] - compare_q['GROSS_MARGIN_PCT']
@@ -248,11 +378,11 @@ if selected_option:
                 with col1:
                     with st.container(border=True):
                         st.markdown("**Profit margins (%)**")
-                        st.line_chart(fin, x="PERIOD_END_DATE", y=["GROSS_MARGIN_PCT", "OPERATING_MARGIN_PCT", "NET_MARGIN_PCT"])
+                        st.line_chart(mdata, x="PERIOD_END_DATE", y=["GROSS_MARGIN_PCT", "OPERATING_MARGIN_PCT", "NET_MARGIN_PCT"])
                 with col2:
                     with st.container(border=True):
                         st.markdown("**Return on equity (%)**")
-                        st.line_chart(fin, x="PERIOD_END_DATE", y="ROE_PCT")
+                        st.line_chart(mdata, x="PERIOD_END_DATE", y="ROE_PCT")
             else:
                 st.info("No margin data")
         except Exception as e:
@@ -310,5 +440,66 @@ if selected_option:
                 st.info("No holdings data")
         except Exception as e:
             st.warning(f"Error: {e}")
+
+    with tab_sentiment:
+        try:
+            sentiment = get_transcript_sentiment(ticker)
+            if not sentiment.empty:
+                latest_score = sentiment.iloc[0]['SENTIMENT_SCORE']
+                avg_score = sentiment['SENTIMENT_SCORE'].mean()
+
+                def sentiment_label(score):
+                    if score >= 0.3:
+                        return "Positive"
+                    elif score >= 0.1:
+                        return "Slightly positive"
+                    elif score >= -0.1:
+                        return "Neutral"
+                    elif score >= -0.3:
+                        return "Slightly negative"
+                    else:
+                        return "Negative"
+
+                with st.container(horizontal=True):
+                    st.metric(
+                        "Latest call sentiment",
+                        sentiment_label(latest_score),
+                        f"{latest_score:+.3f}",
+                        border=True,
+                    )
+                    st.metric(
+                        "Average sentiment",
+                        sentiment_label(avg_score),
+                        f"{avg_score:+.3f}",
+                        border=True,
+                    )
+                    st.metric("Transcripts analysed", len(sentiment), border=True)
+
+                with st.container(border=True):
+                    st.markdown("**Earnings call sentiment trend**")
+                    chart_data = sentiment.sort_values('EVENT_DATE')
+                    st.line_chart(chart_data, x="EVENT_DATE", y="SENTIMENT_SCORE")
+
+                with st.container(border=True):
+                    st.markdown("**Detail**")
+                    st.dataframe(
+                        sentiment,
+                        column_config={
+                            "EVENT_DATE": st.column_config.DateColumn("Date"),
+                            "EVENT_TYPE": "Type",
+                            "FISCAL_YEAR": "FY",
+                            "FISCAL_PERIOD": "Period",
+                            "SENTIMENT_SCORE": st.column_config.NumberColumn("Sentiment", format="%.3f"),
+                            "TEXT_LENGTH": st.column_config.NumberColumn("Text length", format="%,.0f"),
+                        },
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+
+                st.caption("Sentiment scored using SNOWFLAKE.CORTEX.SENTIMENT on earnings call transcripts. Range: -1 (very negative) to +1 (very positive).")
+            else:
+                st.info("No earnings transcripts available for sentiment analysis")
+        except Exception as e:
+            st.warning(f"Sentiment analysis unavailable: {e}")
 else:
     st.info("Search for a company above to begin your deep-dive analysis.")

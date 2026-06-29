@@ -1,5 +1,5 @@
--- ============================================================================
 -- ORBIT Investment Intelligence — Cortex Agents
+-- Co-authored with CoCo
 -- ============================================================================
 -- Creates 3 focused Cortex Agents and registers them with Snowflake Intelligence.
 -- ============================================================================
@@ -12,7 +12,7 @@ USE WAREHOUSE ORBIT_DEMO_WH;
 -- ---------------------------------------------------------------------------
 -- 1. ORBIT Research Agent
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE CORTEX AGENT ORBIT_RESEARCH_AGENT
+CREATE OR REPLACE AGENT ORBIT_RESEARCH_AGENT
   COMMENT = 'Company research: SEC financials, earnings transcripts, insider activity, institutional holdings'
 FROM SPECIFICATION
 $$
@@ -23,8 +23,7 @@ orchestration:
     seconds: 300
     tokens: 32000
 instructions:
-  system: "You are an expert equity research analyst at a leading investment bank. You provide deep, data-driven analysis of companies using real SEC filings, earnings call transcripts, and financial data. Always cite specific data points and dates. Be precise with numbers."
-  response: "Format responses clearly with headers and bullet points. When presenting financial data, use tables. Always state the data source and time period. If data is unavailable, say so clearly rather than speculating."
+  response: "You are an expert equity research analyst at a leading investment bank. You provide deep, data-driven analysis of companies using real SEC filings, earnings call transcripts, and financial data. Always cite specific data points and dates. Be precise with numbers. Format responses clearly with headers and bullet points. When presenting financial data, use tables. Always state the data source and time period. If data is unavailable, say so clearly rather than speculating."
   orchestration: |
     TOOL ROUTING:
     - For financial metrics (revenue, margins, EPS, cash flow): use research_analyst
@@ -39,6 +38,13 @@ instructions:
     - When comparing companies, query each separately then synthesize
     - Use SEC filings search for qualitative risk factors, MD&A, strategy discussion
     - Use transcripts search for management commentary, guidance, Q&A insights
+  sample_questions:
+    - question: "What is Apple's quarterly revenue trend over the last 2 years?"
+    - question: "Compare gross margins for GOOGL vs META over the last 8 quarters"
+    - question: "Who are the largest institutional holders of Microsoft?"
+    - question: "Show NVIDIA's insider trading activity"
+    - question: "What is Meta's EPS trend by quarter?"
+    - question: "Compare net income: Apple vs Microsoft quarterly"
 tools:
   - tool_spec:
       type: "cortex_analyst_text_to_sql"
@@ -64,63 +70,21 @@ tool_resources:
       warehouse: "ORBIT_DEMO_WH"
     semantic_view: "ORBIT_DEMO.AI.ORBIT_RESEARCH_VIEW"
   sec_filings_search:
-    search_service: "ORBIT_DEMO.AI.ORBIT_SEC_FILINGS_SEARCH"
+    name: "ORBIT_DEMO.AI.ORBIT_SEC_FILINGS_SEARCH"
     id_column: "DOCUMENT_ID"
     title_column: "DOCUMENT_TITLE"
-    max_results: 50
-    columns_and_descriptions:
-      TICKER:
-        description: "Company ticker symbol"
-        type: "string"
-        searchable: true
-        filterable: true
-      COMPANY_NAME:
-        description: "Company legal name"
-        type: "string"
-        searchable: true
-        filterable: true
-      FILING_TYPE:
-        description: "SEC filing type (10-K, 10-Q, 8-K)"
-        type: "string"
-        filterable: true
-      GICS_SECTOR:
-        description: "Industry sector"
-        type: "string"
-        filterable: true
-      FISCAL_YEAR:
-        description: "Fiscal year of the filing"
-        type: "number"
-        filterable: true
+    max_results: "50"
   transcripts_search:
-    search_service: "ORBIT_DEMO.AI.ORBIT_TRANSCRIPTS_SEARCH"
+    name: "ORBIT_DEMO.AI.ORBIT_TRANSCRIPTS_SEARCH"
     id_column: "DOCUMENT_ID"
     title_column: "DOCUMENT_TITLE"
-    max_results: 50
-    columns_and_descriptions:
-      TICKER:
-        description: "Company ticker symbol"
-        type: "string"
-        searchable: true
-        filterable: true
-      COMPANY_NAME:
-        description: "Company name"
-        type: "string"
-        searchable: true
-        filterable: true
-      EVENT_TYPE:
-        description: "Type of event (Earnings Call, AGM, Investor Day)"
-        type: "string"
-        filterable: true
-      FISCAL_YEAR:
-        description: "Fiscal year"
-        type: "number"
-        filterable: true
+    max_results: "50"
 $$;
 
 -- ---------------------------------------------------------------------------
 -- 2. ORBIT Portfolio Agent
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE CORTEX AGENT ORBIT_PORTFOLIO_AGENT
+CREATE OR REPLACE AGENT ORBIT_PORTFOLIO_AGENT
   COMMENT = 'Portfolio analytics: holdings, allocation, performance, sector exposure'
 FROM SPECIFICATION
 $$
@@ -131,8 +95,7 @@ orchestration:
     seconds: 300
     tokens: 32000
 instructions:
-  system: "You are a portfolio management specialist at a top-tier asset manager. You help investment professionals understand portfolio positioning, allocation, and performance. You work with model portfolios containing real stocks at real market prices."
-  response: "Present portfolio data in clear tables. For allocation questions, show both absolute weights and relative positioning. When discussing performance, always specify the time period and benchmark. Use charts for trends."
+  response: "You are a portfolio management specialist at a top-tier asset manager. You help investment professionals understand portfolio positioning, allocation, and performance. Present portfolio data in clear tables. For allocation questions, show both absolute weights and relative positioning. When discussing performance, always specify the time period and benchmark. Use charts for trends."
   orchestration: |
     TOOL ROUTING:
     - For portfolio holdings, weights, sector allocation: use portfolio_analyst
@@ -152,6 +115,13 @@ instructions:
     - ORBIT Tech Disruptors Equity (Nasdaq 100, Growth)
     - ORBIT US Value Equity (S&P 500, Value)
     - ORBIT Multi-Asset Income (S&P 500, Income)
+  sample_questions:
+    - question: "What are the top 10 holdings in ORBIT Technology & Infrastructure?"
+    - question: "Show sector allocation for ORBIT US Core Equity"
+    - question: "What is the total AUM across all ORBIT portfolios?"
+    - question: "Compare sector weights between ORBIT ESG Leaders and ORBIT US Value"
+    - question: "Which portfolio has the highest concentration in Technology?"
+    - question: "Show all holdings in the Renewable & Climate Solutions fund"
 tools:
   - tool_spec:
       type: "cortex_analyst_text_to_sql"
@@ -173,7 +143,7 @@ $$;
 -- ---------------------------------------------------------------------------
 -- 3. ORBIT Market Intelligence Agent
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE CORTEX AGENT ORBIT_MARKET_AGENT
+CREATE OR REPLACE AGENT ORBIT_MARKET_AGENT
   COMMENT = 'Market intelligence: yields, FX, economic indicators, stock prices, policy rates'
 FROM SPECIFICATION
 $$
@@ -184,8 +154,7 @@ orchestration:
     seconds: 300
     tokens: 32000
 instructions:
-  system: "You are a macro strategist and market analyst at a global investment bank. You provide insights on interest rates, currencies, economic indicators, and equity market trends using real-time market data. Always ground your analysis in current data."
-  response: "Lead with the key insight, then support with data. Use charts for time series. For yield curves, show the shape. For economic data, highlight the trend direction and recent changes. Cite exact values and dates."
+  response: "You are a macro strategist and market analyst at a global investment bank. You provide insights on interest rates, currencies, economic indicators, and equity market trends using real-time market data. Lead with the key insight, then support with data. Use charts for time series. For yield curves, show the shape. For economic data, highlight the trend direction and recent changes. Cite exact values and dates."
   orchestration: |
     TOOL ROUTING:
     - For yield curves and interest rates: use market_analyst (treasury_yields table)
@@ -200,6 +169,13 @@ instructions:
     - For FX, show the rate and recent trend
     - For economic indicators, filter by INDICATOR_CATEGORY for clean results
     - Stock prices use post-market close (PRICE_CLOSE) as the reference
+  sample_questions:
+    - question: "Show the current US Treasury yield curve"
+    - question: "What are the latest central bank policy rates by country?"
+    - question: "How has GBP/USD moved over the last 3 months?"
+    - question: "Show AAPL and MSFT stock price performance over 1 year"
+    - question: "What are the latest economic indicators for inflation?"
+    - question: "Compare all FX rates against USD"
 tools:
   - tool_spec:
       type: "cortex_analyst_text_to_sql"

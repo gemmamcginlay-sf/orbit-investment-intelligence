@@ -1,6 +1,7 @@
 # ORBIT home page — executive dashboard with preview charts in navigation tiles
 # Co-authored with CoCo
 import streamlit as st
+import altair as alt
 
 conn = st.session_state.conn
 
@@ -29,10 +30,10 @@ def get_kpis():
 @st.cache_data(ttl=300)
 def get_yield_preview():
     return conn.query("""
-        SELECT MATURITY_LABEL, YIELD_PCT
+        SELECT MATURITY_LABEL, YIELD_PCT, MATURITY_MONTHS
         FROM ORBIT_DEMO.MARKET_DATA.FACT_TREASURY_YIELDS
         WHERE DATE = (SELECT MAX(DATE) FROM ORBIT_DEMO.MARKET_DATA.FACT_TREASURY_YIELDS)
-        ORDER BY YIELD_PCT
+        ORDER BY MATURITY_MONTHS
         LIMIT 10
     """)
 
@@ -43,7 +44,7 @@ def get_price_preview():
         SELECT PRICE_DATE, PRICE_CLOSE
         FROM ORBIT_DEMO.MARKET_DATA.FACT_STOCK_PRICES
         WHERE TICKER = 'AAPL'
-        ORDER BY PRICE_DATE DESC
+        ORDER BY PRICE_DATE
         LIMIT 60
     """)
 
@@ -81,14 +82,18 @@ with col1:
         try:
             yields = get_yield_preview()
             if not yields.empty:
-                st.bar_chart(yields, x="MATURITY_LABEL", y="YIELD_PCT", height=150)
+                chart = alt.Chart(yields).mark_bar().encode(
+                    x=alt.X('MATURITY_LABEL', sort=None, title=None),
+                    y=alt.Y('YIELD_PCT', title=None, scale=alt.Scale(zero=False)),
+                ).properties(height=150)
+                st.altair_chart(chart, use_container_width=True)
         except Exception:
             st.caption("Preview unavailable")
         st.page_link("app_pages/market_intelligence.py", label="Open markets", icon=":material/arrow_forward:", use_container_width=True)
 
 with col2:
     with st.container(border=True):
-        st.markdown("**Research hub**")
+        st.markdown("**Research hub** — AAPL")
         try:
             prices = get_price_preview()
             if not prices.empty:
@@ -105,7 +110,11 @@ with col3:
         try:
             sectors = get_sector_preview()
             if not sectors.empty:
-                st.bar_chart(sectors, x="GICS_SECTOR", y="SECTOR_WEIGHT", height=150, horizontal=True)
+                chart = alt.Chart(sectors).mark_bar().encode(
+                    y=alt.Y('GICS_SECTOR', sort=None, title=None),
+                    x=alt.X('SECTOR_WEIGHT', title=None),
+                ).properties(height=150)
+                st.altair_chart(chart, use_container_width=True)
         except Exception:
             st.caption("Preview unavailable")
         st.page_link("app_pages/portfolio.py", label="Open portfolio", icon=":material/arrow_forward:", use_container_width=True)
