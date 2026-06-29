@@ -1,0 +1,9 @@
+manifest_version: 1
+
+artifacts:
+  setup_script: null
+  default_streamlit: orbit_portal.py
+
+configuration:
+  log_level: INFO
+  trace_level: OFF
