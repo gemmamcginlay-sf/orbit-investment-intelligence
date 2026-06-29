@@ -70,15 +70,11 @@ tool_resources:
       warehouse: "ORBIT_DEMO_WH"
     semantic_view: "ORBIT_DEMO.AI.ORBIT_RESEARCH_VIEW"
   sec_filings_search:
-    name: "ORBIT_DEMO.AI.ORBIT_SEC_FILINGS_SEARCH"
-    id_column: "DOCUMENT_ID"
-    title_column: "DOCUMENT_TITLE"
-    max_results: "50"
+    search_service: "ORBIT_DEMO.AI.ORBIT_SEC_FILINGS_SEARCH"
+    max_results: 10
   transcripts_search:
-    name: "ORBIT_DEMO.AI.ORBIT_TRANSCRIPTS_SEARCH"
-    id_column: "DOCUMENT_ID"
-    title_column: "DOCUMENT_TITLE"
-    max_results: "50"
+    search_service: "ORBIT_DEMO.AI.ORBIT_TRANSCRIPTS_SEARCH"
+    max_results: 10
 $$;
 
 -- ---------------------------------------------------------------------------

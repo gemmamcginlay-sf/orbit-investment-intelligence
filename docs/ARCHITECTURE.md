@@ -5,51 +5,52 @@
 ORBIT Investment Intelligence is built entirely on Snowflake with zero external infrastructure. The architecture follows a three-layer pattern:
 
 ```mermaid
-graph TB
-    subgraph Presentation["PRESENTATION LAYER"]
-        Portal["Streamlit Portal<br/>(5 pages)"]
-        CoWork["Snowflake CoWork<br/>(3 agents)"]
+graph LR
+    %% Source
+    subgraph Source["DATA SOURCE"]
+        Paid["Snowflake Public Data (Paid)<br/>━━━━━━━━━━━━━━━━━━━━━<br/>Cybersyn · SEC XBRL<br/>US Treasury · FRED<br/>BIS · Earnings Calls"]
     end
 
-    subgraph AI["AI LAYER"]
-        SV["Semantic Views<br/>Market · Research · Portfolio"]
-        CS["Cortex Search<br/>SEC Filings · Transcripts"]
-        CF["Cortex Functions<br/>SENTIMENT()"]
-    end
-
-    subgraph Data["DATA LAYER — ORBIT_DEMO"]
-        subgraph Curated["CURATED Schema"]
-            DIM["DIM_ISSUER<br/>DIM_PORTFOLIO<br/>DIM_SECURITY<br/>DIM_BENCHMARK"]
-            POS["FACT_POSITION_DAILY"]
+    %% Data Layer
+    subgraph Data["ORBIT_DEMO DATABASE"]
+        direction TB
+        subgraph Curated["CURATED"]
+            DIM["DIM_ISSUER · DIM_PORTFOLIO<br/>DIM_SECURITY · DIM_BENCHMARK<br/>FACT_POSITION_DAILY"]
             DT["DT_BENCHMARK_RETURNS<br/>DT_SECTOR_RETURNS"]
         end
-        subgraph Market["MARKET_DATA Schema"]
-            Prices["FACT_STOCK_PRICES"]
-            Fin["FACT_SEC_FINANCIALS"]
-            Yields["FACT_TREASURY_YIELDS"]
-            FX["FACT_FX_RATES"]
-            Econ["FACT_ECONOMIC_INDICATORS<br/>FACT_POLICY_RATES"]
-            Other["FACT_INSIDER_TRANSACTIONS<br/>FACT_INSTITUTIONAL_HOLDINGS"]
+        subgraph Market["MARKET_DATA"]
+            Facts["FACT_STOCK_PRICES<br/>FACT_SEC_FINANCIALS<br/>FACT_TREASURY_YIELDS<br/>FACT_FX_RATES<br/>FACT_ECONOMIC_INDICATORS<br/>FACT_POLICY_RATES<br/>FACT_INSIDER_TRANSACTIONS<br/>FACT_INSTITUTIONAL_HOLDINGS"]
         end
-        subgraph Raw["RAW Schema"]
-            Filings["SEC Filing Text"]
-            Trans["Earnings Transcripts"]
+        subgraph Raw["RAW"]
+            Corpus["SEC Filing Text<br/>Earnings Transcripts"]
         end
     end
 
-    subgraph Source["SNOWFLAKE PUBLIC DATA (PAID)"]
-        Paid["Cybersyn · SEC · Treasury<br/>FRED · BIS · Transcripts"]
+    %% AI Layer
+    subgraph AI["AI LAYER"]
+        direction TB
+        SV["Semantic Views<br/>━━━━━━━━━━━━━━━<br/>Market · Research · Portfolio"]
+        Search["Cortex Search<br/>━━━━━━━━━━━━━━━<br/>SEC Filings · Transcripts"]
+        Fn["Cortex Functions<br/>━━━━━━━━━━━━━━━<br/>SENTIMENT()"]
     end
 
-    Portal --> SV
-    Portal --> CF
-    CoWork --> SV
-    CoWork --> CS
-    SV --> Curated
-    SV --> Market
-    CS --> Raw
-    CF --> Raw
-    Source -->|"Zero-copy sharing"| Data
+    %% Presentation
+    subgraph Pres["PRESENTATION"]
+        direction TB
+        Portal["Streamlit Portal"]
+        CoWork["Snowflake CoWork"]
+    end
+
+    %% Connections
+    Source -->|"Zero-copy<br/>sharing"| Data
+    Curated --> SV
+    Market --> SV
+    Raw --> Search
+    Raw --> Fn
+    SV --> Portal
+    SV --> CoWork
+    Search --> CoWork
+    Fn --> Portal
 ```
 
 ---
