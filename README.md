@@ -6,57 +6,7 @@ A lean, SQL-first investment intelligence platform powered by Snowflake Cortex A
 
 ## Architecture
 
-```mermaid
-graph LR
-    subgraph paid [Snowflake Public Data - Paid]
-        SP[Stock Prices]
-        SEC[SEC Filings]
-        TR[Treasury Yields]
-        ECON[Economic Indicators]
-        FX[FX Rates]
-        TRANS[Earnings Transcripts]
-    end
-
-    subgraph orbit [ORBIT_DEMO Database]
-        subgraph md [MARKET_DATA Schema]
-            Prices[FACT_STOCK_PRICES]
-            Financials[FACT_SEC_FINANCIALS]
-            Yields[FACT_TREASURY_YIELDS]
-        end
-        subgraph cur [CURATED Schema]
-            Issuer[DIM_ISSUER]
-            Portfolio[DIM_PORTFOLIO]
-            Positions[FACT_POSITION_DAILY]
-            BenchDT["FACT_BENCHMARK_RETURNS (DT)"]
-        end
-        subgraph ai [AI Schema]
-            SV1[ORBIT_MARKET_VIEW]
-            SV2[ORBIT_RESEARCH_VIEW]
-            SV3[ORBIT_PORTFOLIO_VIEW]
-            CSS1[ORBIT_SEC_FILINGS_SEARCH]
-            CSS2[ORBIT_TRANSCRIPTS_SEARCH]
-            A1[ORBIT_RESEARCH_AGENT]
-            A2[ORBIT_PORTFOLIO_AGENT]
-            A3[ORBIT_MARKET_AGENT]
-        end
-        Portal[Streamlit Portal]
-    end
-
-    SP --> Prices
-    SEC --> Financials
-    TR --> Yields
-    TRANS --> CSS2
-    
-    SV2 --> A1
-    CSS1 --> A1
-    CSS2 --> A1
-    SV3 --> A2
-    SV1 --> A3
-    
-    A1 --> Portal
-    A2 --> Portal
-    A3 --> Portal
-```
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full system diagram and data model.
 
 ## What's Included
 

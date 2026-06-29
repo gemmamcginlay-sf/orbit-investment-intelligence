@@ -127,6 +127,62 @@ ORBIT is a proof-of-concept investment intelligence platform built entirely on S
 
 ---
 
+### 9. Agent Configuration — Live Edits (SQL or UI)
+
+**What it shows:** How trivially easy it is to change an agent's model, tools, budget, or behaviour — via SQL or the Snowsight UI.
+
+**Demo talking points:**
+- The entire agent definition is a single `CREATE OR REPLACE AGENT ... FROM SPECIFICATION $$yaml$$` statement
+- Changing the orchestration model is a one-line edit — or a dropdown in the UI
+- Adding tools and skills is point-and-click in the Agent UI (no YAML editing required)
+- Budget controls (token limits, time limits) are inline config
+- Changes deploy instantly — no build step, no container, no restart
+- The same agent is immediately available in Snowflake Intelligence (CoWork) after update
+
+**Live demo — swap the model (SQL):**
+
+```sql
+-- Show how easy it is: change ONE line to switch models
+CREATE OR REPLACE AGENT ORBIT_DEMO.AI.ORBIT_MARKET_AGENT
+  COMMENT = 'Market intelligence — now powered by a different model'
+FROM SPECIFICATION
+$$
+models:
+  orchestration: llama4-maverick   -- ← changed from claude-opus-4-7
+orchestration:
+  budget:
+    seconds: 300
+    tokens: 32000
+...rest stays the same...
+$$;
+```
+
+**Live demo — swap the model (UI):**
+1. Navigate to AI & ML → Cortex Agents → select ORBIT_MARKET_AGENT
+2. Click "Edit" → Models section → change the orchestration model from the dropdown
+3. Save — agent is immediately live with the new model
+
+**Live demo — add a tool or skill (UI):**
+1. Navigate to AI & ML → Cortex Agents → select any ORBIT agent
+2. Click "Edit" → Tools section → "Add Tool"
+3. Browse available tools (search services, semantic views, skills) and add with one click
+4. Save — the agent can now use the new tool immediately
+
+**Live demo — adjust budget:**
+
+```sql
+-- Tighten the budget for cost-conscious deployments
+-- Just change two numbers:
+orchestration:
+  budget:
+    seconds: 120    -- was 300
+    tokens: 16000   -- was 32000
+```
+
+**Key message:** "There's no infra to manage. Model swap? One line of SQL or a dropdown in the UI. New tool? Add it from the UI in two clicks. Budget change? Two numbers. That's it — instant deployment, zero downtime."
+
+---
+
 ## Demo Flow (Suggested Order)
 
 1. **Home page** — Show the executive dashboard, explain KPIs and preview charts
@@ -134,7 +190,8 @@ ORBIT is a proof-of-concept investment intelligence platform built entirely on S
 3. **Research Hub** — Search for AAPL, walk through Stock Price → Earnings (Quarterly/Annual) → Margins → Sentiment
 4. **Portfolio** — Select a portfolio, show holdings with weights, sector allocation
 5. **AI Agents** — Click through to CoWork, ask a cross-cutting question
-6. **Behind the scenes** — Show `scripts/` folder to explain how everything is built from SQL
+6. **Agent Configuration** — Show model swap (SQL or UI dropdown), add a tool via the UI, adjust budget — all instant
+7. **Behind the scenes** — Show `scripts/` folder to explain how everything is built from SQL
 
 ---
 
@@ -144,8 +201,8 @@ ORBIT is a proof-of-concept investment intelligence platform built entirely on S
 |--------|-------|
 | Companies covered | 3,500+ (NYSE/NASDAQ) |
 | Price history | 3 years daily |
-| SEC filings analysed | Full text of 10-K, 10-Q, 8-K |
-| Earnings transcripts | 2 years of calls |
+| SEC filings analysed | Last 1 year of 10-K, 10-Q, 8-K |
+| Earnings transcripts | 1 year of calls |
 | Model portfolios | 11 thematic strategies |
 | Economic indicators | GDP, CPI, unemployment, rates |
 | Currencies | 130+ FX pairs vs USD |

@@ -16,3 +16,12 @@ entities:
       - app_pages/research_hub.py
       - app_pages/portfolio.py
       - app_pages/ai_agents.py
+    identifier:
+      database: ORBIT_DEMO
+      schema: AI
+      name: ORBIT_PORTAL
+    title: orbit_portal
+    query_warehouse: ORBIT_DEMO_WH
+    compute_pool: SYSTEM_COMPUTE_POOL_CPU
+    run_mode: SpcsOnly
+    execute_as: OWNER
