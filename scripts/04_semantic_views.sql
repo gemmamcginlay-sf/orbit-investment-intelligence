@@ -378,6 +378,9 @@ tables:
       - name: POS_PORTFOLIO_ID
         expr: PORTFOLIO_ID
         data_type: NUMBER
+      - name: POS_ISSUER_ID
+        expr: ISSUER_ID
+        data_type: NUMBER
       - name: POS_TICKER
         expr: TICKER
         data_type: VARCHAR
@@ -432,7 +435,7 @@ relationships:
     left_table: POSITIONS
     right_table: ISSUERS
     relationship_columns:
-      - left_column: POS_TICKER
-        right_column: TICKER
+      - left_column: POS_ISSUER_ID
+        right_column: ISSUER_ID
   $$
 );
