@@ -1,3 +1,5 @@
+-- ORBIT Investment Intelligence infrastructure setup with workspace-based Streamlit deployment
+-- Co-authored with CoCo
 -- ============================================================================
 -- ORBIT Investment Intelligence — Infrastructure Setup
 -- ============================================================================
@@ -59,7 +61,7 @@ GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE_PUBLIC_DATA_PAID TO ROLE ORBIT_D
 -- ---------------------------------------------------------------------------
 -- Cortex Cross-Region (required for Ireland / non-US regions)
 -- ---------------------------------------------------------------------------
-ALTER ACCOUNT SET CORTEX_ENABLED_CROSS_REGION = 'ANY_REGION';
+--ALTER ACCOUNT SET CORTEX_ENABLED_CROSS_REGION = 'ANY_REGION';
 
 -- ---------------------------------------------------------------------------
 -- Additional grants for AI features
@@ -69,6 +71,9 @@ GRANT CREATE SEMANTIC VIEW ON SCHEMA ORBIT_DEMO.AI TO ROLE ORBIT_DEMO_ROLE;
 
 -- Grant Snowflake Intelligence access (skip if not available in your region)
 -- GRANT DATABASE ROLE SNOWFLAKE.INTELLIGENCE_USER TO ROLE ORBIT_DEMO_ROLE;
+
+GRANT USAGE ON SNOWFLAKE INTELLIGENCE SNOWFLAKE_INTELLIGENCE_OBJECT_DEFAULT TO ROLE ORBIT_DEMO_ROLE;
+GRANT MODIFY ON SNOWFLAKE INTELLIGENCE SNOWFLAKE_INTELLIGENCE_OBJECT_DEFAULT TO ROLE ORBIT_DEMO_ROLE;
 
 -- ---------------------------------------------------------------------------
 -- Stage for Streamlit app
@@ -81,25 +86,19 @@ CREATE OR REPLACE STAGE ORBIT_DEMO.AI.STREAMLIT_STAGE
     COMMENT = 'Stage for ORBIT Streamlit portal files';
 
 -- ---------------------------------------------------------------------------
--- Git Repository (uses existing GITHUB_GM integration)
+-- Streamlit App
+-- Note: The ORBIT_PORTAL Streamlit app is deployed from the workspace
+-- (orbit_portal/snowflake.yml). No CREATE STREAMLIT DDL is needed here.
+-- If deploying from a named stage instead, uncomment the block below.
 -- ---------------------------------------------------------------------------
-USE ROLE ORBIT_DEMO_ROLE;
-USE DATABASE ORBIT_DEMO;
 
-CREATE OR REPLACE GIT REPOSITORY ORBIT_DEMO.AI.ORBIT_REPO
-    API_INTEGRATION = GITHUB_GM
-    ORIGIN = 'https://github.com/gemmamcginlay-sf/orbit-investment-intelligence.git';
-
-ALTER GIT REPOSITORY ORBIT_DEMO.AI.ORBIT_REPO FETCH;
-
--- ---------------------------------------------------------------------------
--- Streamlit App (from Git repository)
--- ---------------------------------------------------------------------------
+/*
 CREATE OR REPLACE STREAMLIT ORBIT_DEMO.AI.ORBIT_PORTAL
-    ROOT_LOCATION = '@ORBIT_DEMO.AI.ORBIT_REPO/branches/main/'
+    FROM '@ORBIT_DEMO.AI.STREAMLIT_STAGE'
     MAIN_FILE = 'streamlit_app.py'
     QUERY_WAREHOUSE = 'ORBIT_DEMO_WH'
     COMMENT = 'ORBIT Investment Intelligence Portal';
+*/
 
 -- ---------------------------------------------------------------------------
 -- Verify Paid listing is accessible
