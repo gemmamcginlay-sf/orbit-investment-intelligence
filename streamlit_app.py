@@ -1,154 +1,152 @@
-"""
-ORBIT Investment Intelligence Portal
-Streamlit multi-page app — landing page with KPIs and navigation.
-"""
-import streamlit as st
+# ORBIT Investment Intelligence Portal — polished landing page with portal-style navigation
+# Co-authored with CoCo
 import os
-import base64
+import streamlit as st
 
 st.set_page_config(
-    page_title="ORBIT",
-    page_icon="🔵",
+    page_title="ORBIT | Investment Intelligence",
+    page_icon=":material/public:",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Load logo as base64 for inline display
-def get_logo_base64(filename):
-    """Load a logo file and return base64 string for HTML embedding."""
-    # Try relative paths that work in Streamlit-in-Snowflake
-    for base_path in ['.', '/app', os.path.dirname(__file__) if '__file__' in dir() else '.']:
-        path = os.path.join(base_path, 'assets', 'logos', filename)
-        if os.path.exists(path):
-            with open(path, 'rb') as f:
-                return base64.b64encode(f.read()).decode()
-    return None
+# Branding: sidebar logo + main logo
+st.logo(
+    ".streamlit/orbit_logo_dark_horizontal.png",
+    icon_image=".streamlit/orbit_logo_dark_square.png",
+)
 
-logo_b64 = get_logo_base64('orbit_logo_dark_horizontal.png')
-
-# ORBIT brand CSS
-st.markdown("""
-<style>
-    .orbit-header {
-        text-align: center;
-        padding: 1rem 0;
-    }
-    .orbit-title {
-        color: #1B6B93;
-        font-size: 2.5rem;
-        font-weight: 700;
-        margin-bottom: 0;
-    }
-    .orbit-subtitle {
-        color: #5DADE2;
-        font-size: 1.1rem;
-        font-weight: 400;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #1B6B93 0%, #2E8BC0 100%);
-        border-radius: 12px;
-        padding: 1.5rem;
-        color: white;
-        text-align: center;
-    }
-    .metric-value {
-        font-size: 2rem;
-        font-weight: 700;
-    }
-    .metric-label {
-        font-size: 0.85rem;
-        opacity: 0.9;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-from snowflake.snowpark.context import get_active_session
-session = get_active_session()
+conn = st.connection("snowflake", ttl=os.getenv("SNOWFLAKE_CONNECTION_TTL"))
 
 
 @st.cache_data(ttl=300)
 def get_kpis():
-    """Fetch dashboard KPIs."""
     try:
-        securities = session.sql("SELECT COUNT(*) FROM ORBIT_DEMO.CURATED.DIM_ISSUER").collect()[0][0]
+        securities = conn.query(
+            "SELECT COUNT(*) AS CNT FROM ORBIT_DEMO.CURATED.DIM_ISSUER"
+        ).iloc[0, 0]
     except Exception:
         securities = "N/A"
     try:
-        latest_date = session.sql(
-            "SELECT MAX(PRICE_DATE)::VARCHAR FROM ORBIT_DEMO.MARKET_DATA.FACT_STOCK_PRICES"
-        ).collect()[0][0]
+        latest_date = conn.query(
+            "SELECT MAX(PRICE_DATE)::VARCHAR AS DT FROM ORBIT_DEMO.MARKET_DATA.FACT_STOCK_PRICES"
+        ).iloc[0, 0]
     except Exception:
         latest_date = "N/A"
     try:
-        filings = session.sql("SELECT COUNT(*) FROM ORBIT_DEMO.RAW.SEC_FILING_TEXT").collect()[0][0]
+        filings = conn.query(
+            "SELECT COUNT(*) AS CNT FROM ORBIT_DEMO.RAW.SEC_FILING_TEXT"
+        ).iloc[0, 0]
     except Exception:
         filings = "N/A"
     try:
-        transcripts = session.sql(
-            "SELECT COUNT(*) FROM ORBIT_DEMO.RAW.EARNINGS_TRANSCRIPTS_CORPUS"
-        ).collect()[0][0]
+        transcripts = conn.query(
+            "SELECT COUNT(*) AS CNT FROM ORBIT_DEMO.RAW.EARNINGS_TRANSCRIPTS_CORPUS"
+        ).iloc[0, 0]
     except Exception:
         transcripts = "N/A"
     return securities, latest_date, filings, transcripts
 
 
-# Header
-if logo_b64:
-    st.markdown(
-        f'<div class="orbit-header"><img src="data:image/png;base64,{logo_b64}" style="max-height:80px;"></div>',
-        unsafe_allow_html=True
-    )
-else:
-    st.markdown('<div class="orbit-header">', unsafe_allow_html=True)
-    st.markdown('<p class="orbit-title">ORBIT</p>', unsafe_allow_html=True)
-    st.markdown('<p class="orbit-subtitle">Omnicient Reasoning Barclays Intelligence Tool</p>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+# --- Portal header ---
+st.image(".streamlit/orbit_logo_dark_horizontal.png", width=280)
+st.markdown(
+    "##### Omniscient Reasoning Barclays Intelligence Tool"
+)
+st.caption("Your unified gateway to market data, research, portfolio analytics, and AI-powered insights.")
 
-st.divider()
+st.space("medium")
 
-# KPI Cards
+# --- KPI row ---
 securities, latest_date, filings, transcripts = get_kpis()
 
-col1, col2, col3, col4 = st.columns(4)
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.metric(
+        "Securities tracked",
+        f"{securities:,}" if isinstance(securities, int) else securities,
+    )
+with c2:
+    st.metric("Latest market date", latest_date)
+with c3:
+    st.metric(
+        "SEC filings loaded",
+        f"{filings:,}" if isinstance(filings, int) else filings,
+    )
+with c4:
+    st.metric(
+        "Earnings transcripts",
+        f"{transcripts:,}" if isinstance(transcripts, int) else transcripts,
+    )
+
+st.space("large")
+
+# --- Navigation portal cards ---
+st.markdown("##### Explore the platform")
+
+col1, col2 = st.columns(2)
+
 with col1:
-    st.metric("Securities Tracked", f"{securities:,}" if isinstance(securities, int) else securities)
-with col2:
-    st.metric("Latest Market Date", latest_date)
-with col3:
-    st.metric("SEC Filings Loaded", f"{filings:,}" if isinstance(filings, int) else filings)
-with col4:
-    st.metric("Earnings Transcripts", f"{transcripts:,}" if isinstance(transcripts, int) else transcripts)
-
-st.divider()
-
-# Navigation Grid
-st.subheader("Explore")
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.markdown("### Market Intelligence")
-    st.write("Treasury yields, FX rates, economic indicators, policy rates")
-    st.page_link("pages/1_Market_Intelligence.py", label="Open", icon="📊")
+    with st.container(border=True):
+        st.subheader(":material/trending_up: Market intelligence")
+        st.markdown(
+            "Treasury yields, FX rates, economic indicators, and central bank policy rates. "
+            "Stay on top of macro conditions."
+        )
+        st.page_link(
+            "pages/1_Market_Intelligence.py",
+            label="Open market intelligence",
+            icon=":material/arrow_forward:",
+            use_container_width=True,
+        )
 
 with col2:
-    st.markdown("### Research Hub")
-    st.write("Company financials, SEC filings, insider trades, ownership")
-    st.page_link("pages/2_Research_Hub.py", label="Open", icon="🔬")
+    with st.container(border=True):
+        st.subheader(":material/search: Research hub")
+        st.markdown(
+            "Company financials, SEC filings, insider trades, and institutional ownership. "
+            "Deep-dive into any issuer."
+        )
+        st.page_link(
+            "pages/2_Research_Hub.py",
+            label="Open research hub",
+            icon=":material/arrow_forward:",
+            use_container_width=True,
+        )
+
+col3, col4 = st.columns(2)
 
 with col3:
-    st.markdown("### Portfolio")
-    st.write("Holdings, allocation, performance, benchmark comparison")
-    st.page_link("pages/3_Portfolio.py", label="Open", icon="💼")
+    with st.container(border=True):
+        st.subheader(":material/account_balance: Portfolio")
+        st.markdown(
+            "Holdings, allocation, performance, and benchmark comparison across "
+            "ORBIT model portfolios."
+        )
+        st.page_link(
+            "pages/3_Portfolio.py",
+            label="Open portfolio",
+            icon=":material/arrow_forward:",
+            use_container_width=True,
+        )
 
 with col4:
-    st.markdown("### AI Agents")
-    st.write("Chat with ORBIT agents via Snowflake Intelligence")
-    st.page_link("pages/4_AI_Agents.py", label="Open", icon="🤖")
+    with st.container(border=True):
+        st.subheader(":material/smart_toy: AI agents")
+        st.markdown(
+            "Chat with ORBIT's Cortex agents for research, portfolio analysis, "
+            "and market intelligence via natural language."
+        )
+        st.page_link(
+            "pages/4_AI_Agents.py",
+            label="Open AI agents",
+            icon=":material/arrow_forward:",
+            use_container_width=True,
+        )
 
-st.divider()
+st.space("large")
 
-# Data source info
+# --- Footer ---
 st.caption(
     "Data sourced from Snowflake Public Data (Paid) — near-real-time market data, "
     "SEC filings, and earnings transcripts. Refreshed daily."
