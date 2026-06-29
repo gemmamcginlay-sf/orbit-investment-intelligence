@@ -3,13 +3,28 @@ ORBIT Investment Intelligence Portal
 Streamlit multi-page app — landing page with KPIs and navigation.
 """
 import streamlit as st
+import os
+import base64
 
 st.set_page_config(
     page_title="ORBIT",
-    page_icon="assets/logos/orbit_logo_dark_square.png",
+    page_icon="🔵",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Load logo as base64 for inline display
+def get_logo_base64(filename):
+    """Load a logo file and return base64 string for HTML embedding."""
+    # Try relative paths that work in Streamlit-in-Snowflake
+    for base_path in ['.', '/app', os.path.dirname(__file__) if '__file__' in dir() else '.']:
+        path = os.path.join(base_path, 'assets', 'logos', filename)
+        if os.path.exists(path):
+            with open(path, 'rb') as f:
+                return base64.b64encode(f.read()).decode()
+    return None
+
+logo_b64 = get_logo_base64('orbit_logo_dark_horizontal.png')
 
 # ORBIT brand CSS
 st.markdown("""
@@ -78,10 +93,16 @@ def get_kpis():
 
 
 # Header
-st.markdown('<div class="orbit-header">', unsafe_allow_html=True)
-st.markdown('<p class="orbit-title">ORBIT</p>', unsafe_allow_html=True)
-st.markdown('<p class="orbit-subtitle">Omnicient Reasoning Barclays Intelligence Tool</p>', unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
+if logo_b64:
+    st.markdown(
+        f'<div class="orbit-header"><img src="data:image/png;base64,{logo_b64}" style="max-height:80px;"></div>',
+        unsafe_allow_html=True
+    )
+else:
+    st.markdown('<div class="orbit-header">', unsafe_allow_html=True)
+    st.markdown('<p class="orbit-title">ORBIT</p>', unsafe_allow_html=True)
+    st.markdown('<p class="orbit-subtitle">Omnicient Reasoning Barclays Intelligence Tool</p>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 st.divider()
 
