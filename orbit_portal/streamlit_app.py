@@ -10,20 +10,18 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# st.logo: first arg = full logo shown in sidebar (dark version for dark sidebar)
-# icon_image = collapsed/small icon for sidebar (dark square for dark sidebar)
-st.logo(
-    ".streamlit/orbit_logo_dark_horizontal.png",
-    icon_image=".streamlit/orbit_logo_dark_square.png",
-)
+# Logo above navigation — use sidebar image at top
+with st.sidebar:
+    st.image(".streamlit/orbit_logo_light_horizontal.png", use_container_width=True)
+    st.markdown("---")
 
-# Shared connection — available to all pages via st.session_state
+# Shared connection
 conn = st.connection("snowflake", ttl=os.getenv("SNOWFLAKE_CONNECTION_TTL"))
 st.session_state.conn = conn
 
-# Navigation
+# Navigation (renders below the sidebar content above)
 page = st.navigation([
-    st.Page("app_pages/home.py", title="Home", icon=":material/home:"),
+    st.Page("app_pages/home.py", title="Home", icon=":material/home:", default=True),
     st.Page("app_pages/market_intelligence.py", title="Market Intelligence", icon=":material/trending_up:"),
     st.Page("app_pages/research_hub.py", title="Research Hub", icon=":material/search:"),
     st.Page("app_pages/portfolio.py", title="Portfolio", icon=":material/account_balance:"),
