@@ -81,6 +81,38 @@ CREATE OR REPLACE STAGE ORBIT_DEMO.AI.STREAMLIT_STAGE
     COMMENT = 'Stage for ORBIT Streamlit portal files';
 
 -- ---------------------------------------------------------------------------
+-- Git Repository Integration (for Streamlit from Git)
+-- ---------------------------------------------------------------------------
+USE ROLE ACCOUNTADMIN;
+
+CREATE OR REPLACE API INTEGRATION ORBIT_GIT_INTEGRATION
+    API_PROVIDER = GIT_HTTPS_API
+    API_ALLOWED_PREFIXES = ('https://github.com/gemmamcginlay-sf/')
+    ENABLED = TRUE
+    COMMENT = 'GitHub integration for ORBIT repo';
+
+GRANT USAGE ON INTEGRATION ORBIT_GIT_INTEGRATION TO ROLE ORBIT_DEMO_ROLE;
+
+USE ROLE ORBIT_DEMO_ROLE;
+USE DATABASE ORBIT_DEMO;
+
+CREATE OR REPLACE GIT REPOSITORY ORBIT_DEMO.AI.ORBIT_REPO
+    API_INTEGRATION = ORBIT_GIT_INTEGRATION
+    ORIGIN = 'https://github.com/gemmamcginlay-sf/orbit-investment-intelligence.git';
+
+-- Fetch latest from remote
+ALTER GIT REPOSITORY ORBIT_DEMO.AI.ORBIT_REPO FETCH;
+
+-- ---------------------------------------------------------------------------
+-- Streamlit App (from Git repository)
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE STREAMLIT ORBIT_DEMO.AI.ORBIT_PORTAL
+    ROOT_LOCATION = '@ORBIT_DEMO.AI.ORBIT_REPO/branches/main/'
+    MAIN_FILE = 'streamlit_app.py'
+    QUERY_WAREHOUSE = 'ORBIT_DEMO_WH'
+    COMMENT = 'ORBIT Investment Intelligence Portal';
+
+-- ---------------------------------------------------------------------------
 -- Verify Paid listing is accessible
 -- ---------------------------------------------------------------------------
 SELECT 'Paid listing accessible' AS STATUS,
