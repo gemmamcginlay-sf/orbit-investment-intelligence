@@ -1,4 +1,4 @@
-# ORBIT Market Intelligence — macro overview + UK and FX focus
+# ORBIT Market Intelligence — macro overview, FX, UK data, Form 144
 # Co-authored with CoCo
 import streamlit as st
 import pandas as pd
@@ -97,9 +97,20 @@ def get_policy_rates():
     """)
 
 
-tab1, tab2 = st.tabs(["Macro overview", "UK and FX"])
+@st.cache_data(ttl=300)
+def get_form144_filings():
+    return conn.query("""
+        SELECT ISSUER_NAME, FILER_NAME, SECURITY_TITLE, TRANSACTION_SHARES, FILED_DATE
+        FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.SEC_FORM144_SECURITIES_TO_BE_SOLD_INDEX
+        WHERE FILED_DATE >= DATEADD(day, -60, CURRENT_DATE())
+        ORDER BY FILED_DATE DESC LIMIT 100
+    """)
 
-with tab1:
+
+tab_macro, tab_fx, tab_form144 = st.tabs(["US Macro", "FX & UK", "Form 144"])
+
+# ─── TAB 1: US MACRO ─────────────────────────────────────────────────────────
+with tab_macro:
     with st.container(border=True):
         st.markdown("**US Treasury yield curve (latest)**")
         try:
@@ -162,7 +173,6 @@ with tab1:
             except Exception as e:
                 st.warning(f"Economic data unavailable: {e}")
 
-    # Interactive economic indicator explorer
     with st.container(border=True):
         st.markdown("**Economic indicator explorer**")
         try:
@@ -191,69 +201,18 @@ with tab1:
         except Exception as e:
             st.warning(f"Indicator explorer unavailable: {e}")
 
-with tab2:
-    col1, col2 = st.columns(2)
-
-    with col1:
-        with st.container(border=True):
-            st.markdown("**GBP/USD history**")
-            try:
-                gbp = get_fx_history('GBP')
-                if not gbp.empty:
-                    latest_rate = gbp.iloc[-1]['EXCHANGE_RATE']
-                    st.metric("GBP/USD (latest)", f"{latest_rate:.4f}")
-                    st.line_chart(gbp, x="DATE", y="EXCHANGE_RATE")
-                else:
-                    st.info("No GBP/USD data")
-            except Exception as e:
-                st.warning(f"GBP data unavailable: {e}")
-
-        # Bank of England rate
-        with st.container(border=True):
-            st.markdown("**Bank of England base rate**")
-            try:
-                rates = get_policy_rates()
-                boe = rates[rates['COUNTRY'].str.contains('United Kingdom', case=False, na=False)]
-                if not boe.empty:
-                    row = boe.iloc[0]
-                    st.metric("BoE base rate", f"{row['RATE_PCT']:.2f}%")
-                else:
-                    st.caption("BoE rate not found — showing all countries:")
-                    st.dataframe(rates[['COUNTRY', 'RATE_PCT']], hide_index=True, use_container_width=True)
-            except Exception as e:
-                st.warning(f"BoE rate unavailable: {e}")
-
-    with col2:
-        with st.container(border=True):
-            st.markdown("**All FX rates vs USD (latest)**")
-            try:
-                fx = get_fx_rates()
-                if not fx.empty:
-                    st.dataframe(
-                        fx,
-                        column_config={
-                            "QUOTE_CURRENCY": "Currency",
-                            "EXCHANGE_RATE": st.column_config.NumberColumn("Rate", format="%.4f"),
-                            "DATE": st.column_config.DateColumn("Date"),
-                        },
-                        hide_index=True,
-                        use_container_width=True,
-                    )
-                else:
-                    st.info("No FX data")
-            except Exception as e:
-                st.warning(f"FX data unavailable: {e}")
-
-    # FX pair picker
+# ─── TAB 2: FX & UK ──────────────────────────────────────────────────────────
+with tab_fx:
+    # FX pair picker at top — most useful control
     with st.container(border=True):
-        st.markdown("**FX pair chart — pick any currency**")
+        st.markdown("**FX rates — pick any pair vs USD**")
         try:
             currencies = get_fx_currencies()
             if not currencies.empty:
+                ccy_list = currencies['QUOTE_CURRENCY'].tolist()
+                default_idx = ccy_list.index('GBP') if 'GBP' in ccy_list else 0
                 selected_ccy = st.selectbox(
-                    "Currency vs USD", currencies['QUOTE_CURRENCY'].tolist(),
-                    index=currencies['QUOTE_CURRENCY'].tolist().index('GBP') if 'GBP' in currencies['QUOTE_CURRENCY'].values else 0,
-                    key="fx_picker"
+                    "Currency", ccy_list, index=default_idx, key="fx_picker"
                 )
                 if selected_ccy:
                     fx_hist = get_fx_history(selected_ccy)
@@ -261,11 +220,128 @@ with tab2:
                         latest = fx_hist.iloc[-1]['EXCHANGE_RATE']
                         first = fx_hist.iloc[0]['EXCHANGE_RATE']
                         change_pct = ((latest - first) / first) * 100
-                        st.metric(f"{selected_ccy}/USD", f"{latest:.4f}", f"{change_pct:+.2f}%")
-                        st.line_chart(fx_hist, x="DATE", y="EXCHANGE_RATE")
+
+                        with st.container(horizontal=True):
+                            st.metric(f"{selected_ccy}/USD", f"{latest:.4f}", f"{change_pct:+.2f}% (period)", border=True)
+                            st.metric("Data points", len(fx_hist), border=True)
+                            st.metric("Latest date", str(fx_hist.iloc[-1]['DATE']), border=True)
+
+                        st.line_chart(fx_hist, x="DATE", y="EXCHANGE_RATE", height=280)
                     else:
                         st.info(f"No history for {selected_ccy}")
             else:
                 st.info("No FX currencies available")
         except Exception as e:
-            st.warning(f"FX picker unavailable: {e}")
+            st.warning(f"FX data unavailable: {e}")
+
+    # All FX snapshot
+    with st.expander("All FX rates vs USD (latest snapshot)"):
+        try:
+            fx = get_fx_rates()
+            if not fx.empty:
+                st.dataframe(
+                    fx,
+                    column_config={
+                        "QUOTE_CURRENCY": "Currency",
+                        "EXCHANGE_RATE": st.column_config.NumberColumn("Rate", format="%.4f"),
+                        "DATE": st.column_config.DateColumn("Date"),
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                )
+        except Exception as e:
+            st.warning(f"FX snapshot unavailable: {e}")
+
+    # Bank of England + policy rates
+    st.markdown("---")
+    try:
+        rates = get_policy_rates()
+        boe = rates[rates['COUNTRY'].str.contains('United Kingdom', case=False, na=False)]
+        if not boe.empty:
+            st.metric("Bank of England base rate", f"{boe.iloc[0]['RATE_PCT']:.2f}%")
+    except Exception:
+        pass
+
+    # UK economic indicators
+    st.markdown("---")
+    with st.container(border=True):
+        st.markdown("**UK economic indicators**")
+        st.caption("Source: Snowflake Public Data (Paid) — UK data updated periodically; latest observations may lag.")
+
+        search = st.text_input("Search UK data", placeholder="retail, GDP, population, unemployment", key="uk_s")
+
+        if search:
+            uk_vars = conn.query("""
+                SELECT DISTINCT VARIABLE_NAME, FREQUENCY
+                FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.UNITED_KINGDOM_ATTRIBUTES
+                WHERE UPPER(VARIABLE_NAME) LIKE UPPER(?) LIMIT 30
+            """, params=[f"%{search}%"])
+        else:
+            uk_vars = conn.query("""
+                SELECT DISTINCT VARIABLE_NAME, FREQUENCY
+                FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.UNITED_KINGDOM_ATTRIBUTES
+                WHERE VARIABLE_NAME LIKE '%Retail Sales%' OR VARIABLE_NAME LIKE '%all retailing%'
+                LIMIT 30
+            """)
+
+        if not uk_vars.empty:
+            selected_var = st.selectbox("Indicator", uk_vars["VARIABLE_NAME"].tolist(), label_visibility="collapsed", key="uk_var")
+
+            ts_df = conn.query("""
+                SELECT DATE, VALUE, UNIT
+                FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.UNITED_KINGDOM_TIMESERIES
+                WHERE VARIABLE_NAME = ? ORDER BY DATE DESC LIMIT 200
+            """, params=[selected_var])
+
+            if not ts_df.empty:
+                ts_df = ts_df.sort_values("DATE")
+                latest = ts_df.iloc[-1]
+                with st.container(horizontal=True):
+                    st.metric("Latest", f"{float(latest['VALUE']):,.2f}", border=True)
+                    st.metric("Date", str(latest["DATE"]), border=True)
+                    st.metric("Frequency", uk_vars[uk_vars["VARIABLE_NAME"] == selected_var].iloc[0]["FREQUENCY"], border=True)
+
+                st.line_chart(ts_df.set_index("DATE")["VALUE"], height=280)
+
+                with st.expander("Data table"):
+                    st.dataframe(ts_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("Search for UK indicators (retail, GDP, population, unemployment, etc.)")
+
+# ─── TAB 3: FORM 144 ─────────────────────────────────────────────────────────
+with tab_form144:
+    st.markdown("**Form 144 — Intent to Sell (last 60 days)**")
+    st.caption("Form 144 filings signal insider intent to sell restricted/control securities.")
+    try:
+        f144_df = get_form144_filings()
+        if not f144_df.empty:
+            with st.container(horizontal=True):
+                st.metric("Filings (60d)", len(f144_df), border=True)
+                unique_issuers = f144_df["ISSUER_NAME"].nunique()
+                st.metric("Unique issuers", unique_issuers, border=True)
+
+            with st.container(border=True):
+                st.markdown("**Top issuers by filing count**")
+                top_issuers = f144_df["ISSUER_NAME"].value_counts().head(10).reset_index()
+                top_issuers.columns = ["ISSUER", "FILINGS"]
+                st.bar_chart(top_issuers, x="ISSUER", y="FILINGS", height=250)
+
+            with st.container(border=True):
+                st.markdown("**All filings**")
+                st.dataframe(
+                    f144_df,
+                    column_config={
+                        "ISSUER_NAME": "Issuer",
+                        "FILER_NAME": "Filer",
+                        "SECURITY_TITLE": "Security",
+                        "TRANSACTION_SHARES": st.column_config.NumberColumn("Shares", format="%,.0f"),
+                        "FILED_DATE": st.column_config.DateColumn("Filed"),
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    height=400,
+                )
+        else:
+            st.info("No recent Form 144 filings found.")
+    except Exception as e:
+        st.warning(f"Form 144 data unavailable: {e}")

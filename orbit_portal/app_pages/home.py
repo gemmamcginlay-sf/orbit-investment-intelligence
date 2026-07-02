@@ -62,7 +62,7 @@ def get_sector_preview():
     """)
 
 
-st.image(".streamlit/orbit_logo_light_horizontal.png", width=380)
+st.image(".streamlit/orbit_logo_dark_horizontal_2.png", width=380)
 
 securities, latest_date, filings, transcripts = get_kpis()
 

@@ -85,6 +85,67 @@ def get_transcript_sentiment(ticker):
     """, params=[ticker])
 
 
+@st.cache_data(ttl=600)
+def get_earnings_transcripts(ticker):
+    return conn.query("""
+        SELECT EVENT_TITLE, EVENT_TYPE, EVENT_TIMESTAMP, FISCAL_PERIOD, FISCAL_YEAR,
+               TRANSCRIPT, TRANSCRIPT_TYPE
+        FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.COMPANY_EVENT_TRANSCRIPT_ATTRIBUTES
+        WHERE UPPER(PRIMARY_TICKER) = UPPER(:1)
+          AND TRANSCRIPT_TYPE = 'SPEAKERS_ANNOTATED'
+        ORDER BY EVENT_TIMESTAMP DESC
+        LIMIT 12
+    """, params=[ticker])
+
+
+@st.cache_data(ttl=300)
+def resolve_cik(ticker):
+    result = conn.query("""
+        SELECT CIK FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.COMPANY_INDEX
+        WHERE UPPER(PRIMARY_TICKER) = UPPER(:1) LIMIT 1
+    """, params=[ticker])
+    if not result.empty:
+        return result.iloc[0]["CIK"]
+    return None
+
+
+@st.cache_data(ttl=300)
+def get_filing_summary(cik):
+    return conn.query("""
+        SELECT FORM_TYPE, COUNT(*) AS CNT
+        FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.SEC_REPORT_INDEX
+        WHERE CIK = :1 GROUP BY FORM_TYPE ORDER BY CNT DESC LIMIT 8
+    """, params=[cik])
+
+
+@st.cache_data(ttl=300)
+def get_sec_segments(cik):
+    return conn.query("""
+        SELECT PERIOD_END_DATE, VARIABLE_NAME, VALUE, BUSINESS_SEGMENT, UNIT
+        FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.SEC_METRICS_TIMESERIES
+        WHERE CIK = :1 AND VALUE IS NOT NULL ORDER BY PERIOD_END_DATE DESC LIMIT 500
+    """, params=[cik])
+
+
+@st.cache_data(ttl=300)
+def get_sec_xbrl(cik):
+    return conn.query("""
+        SELECT TAG, VALUE, UNIT_OF_MEASURE, PERIOD_END_DATE, STATEMENT, MEASURE_DESCRIPTION
+        FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.SEC_REPORT_ATTRIBUTES
+        WHERE CIK = :1 AND STATEMENT IN ('BS','IS','CF')
+        ORDER BY PERIOD_END_DATE DESC LIMIT 500
+    """, params=[cik])
+
+
+@st.cache_data(ttl=300)
+def get_sec_sections(cik):
+    return conn.query("""
+        SELECT ITEM_TITLE, FORM_TYPE, FILED_DATE, LEFT(PLAINTEXT_CONTENT, 1500) AS PREVIEW
+        FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.SEC_CORPORATE_REPORT_ITEM_ATTRIBUTES
+        WHERE CIK = :1 ORDER BY FILED_DATE DESC LIMIT 20
+    """, params=[cik])
+
+
 companies = get_companies()
 search_options = [f"{row['TICKER']} — {row['COMPANY_NAME']}" for _, row in companies.iterrows()]
 
@@ -104,8 +165,8 @@ if selected_option:
         st.metric("Ticker", ticker, border=True)
         st.metric("Sector", company_row['GICS_SECTOR'], border=True)
 
-    tab_price, tab_earnings, tab_margins, tab_insiders, tab_holders, tab_sentiment = st.tabs([
-        "Stock price", "Earnings", "Margins", "Insider trades", "Top holders", "Sentiment"
+    tab_price, tab_earnings, tab_margins, tab_insiders, tab_holders, tab_transcripts, tab_filings = st.tabs([
+        "Stock price", "Earnings", "Margins", "Insider trades", "Top holders", "Earnings transcripts", "SEC filings"
     ])
 
     with tab_price:
@@ -245,12 +306,34 @@ if selected_option:
                 if len(data) >= 2:
                     latest_q = data.iloc[-1]
                     prev_q = data.iloc[-2]
-                    yoy_q = data.iloc[-5] if len(data) >= 5 else (data.iloc[-2] if period_view != "Quarterly" else None)
 
-                    def pct_change(new, old):
-                        if old and old != 0:
-                            return ((new - old) / abs(old)) * 100
-                        return None
+                    # For YoY: find same quarter from prior year by matching month
+                    yoy_q = None
+                    if period_view == "Quarterly" and len(data) >= 3:
+                        latest_date = pd.to_datetime(latest_q['PERIOD_END_DATE'])
+                        target_year = latest_date.year - 1
+                        target_month = latest_date.month
+                        data_dt = data.copy()
+                        data_dt['_DATE'] = pd.to_datetime(data_dt['PERIOD_END_DATE'])
+                        # Find closest quarter in the prior year (within 45 days of same month)
+                        prior_year = data_dt[data_dt['_DATE'].dt.year == target_year]
+                        if not prior_year.empty:
+                            # Match closest month
+                            prior_year = prior_year.copy()
+                            prior_year['_month_diff'] = abs(prior_year['_DATE'].dt.month - target_month)
+                            best_match = prior_year.loc[prior_year['_month_diff'].idxmin()]
+                            yoy_q = best_match
+                        data_dt.drop(columns=['_DATE'], inplace=True)
+
+                    def pct_change(new_val, old_val):
+                        try:
+                            new_f = float(new_val)
+                            old_f = float(old_val)
+                            if pd.isna(new_f) or pd.isna(old_f) or old_f == 0:
+                                return None
+                            return ((new_f - old_f) / abs(old_f)) * 100
+                        except (TypeError, ValueError):
+                            return None
 
                     if period_view == "Quarterly":
                         comp_mode = st.radio(
@@ -268,20 +351,31 @@ if selected_option:
                         ni_delta = pct_change(latest_q['NET_INCOME'], compare_to['NET_INCOME'])
                         eps_delta = pct_change(latest_q['EPS_BASIC'], compare_to['EPS_BASIC'])
 
+                        def fmt_dollar(val, decimals=0):
+                            try:
+                                f = float(val)
+                                if pd.isna(f):
+                                    return "N/A"
+                                if decimals == 0:
+                                    return f"${f:,.0f}"
+                                return f"${f:.{decimals}f}"
+                            except (TypeError, ValueError):
+                                return "N/A"
+
                         with st.container(horizontal=True):
                             st.metric(
-                                "Revenue", f"${latest_q['REVENUE']:,.0f}",
-                                f"{rev_delta:+.1f}% {comp_label}" if rev_delta is not None else "N/A",
+                                "Revenue", fmt_dollar(latest_q['REVENUE']),
+                                f"{rev_delta:+.1f}% {comp_label}" if rev_delta is not None else None,
                                 border=True,
                             )
                             st.metric(
-                                "Net income", f"${latest_q['NET_INCOME']:,.0f}",
-                                f"{ni_delta:+.1f}% {comp_label}" if ni_delta is not None else "N/A",
+                                "Net income", fmt_dollar(latest_q['NET_INCOME']),
+                                f"{ni_delta:+.1f}% {comp_label}" if ni_delta is not None else None,
                                 border=True,
                             )
                             st.metric(
-                                "EPS", f"${latest_q['EPS_BASIC']:.2f}",
-                                f"{eps_delta:+.1f}% {comp_label}" if eps_delta is not None else "N/A",
+                                "EPS", fmt_dollar(latest_q['EPS_BASIC'], 2),
+                                f"{eps_delta:+.1f}% {comp_label}" if eps_delta is not None else None,
                                 border=True,
                             )
 
@@ -345,7 +439,21 @@ if selected_option:
                 if len(mdata) >= 2:
                     latest_q = mdata.iloc[-1]
                     prev_q = mdata.iloc[-2]
-                    yoy_q = mdata.iloc[-5] if len(mdata) >= 5 else None
+
+                    # For YoY: find same quarter from prior year by matching month
+                    yoy_q = None
+                    if margin_period == "Quarterly" and len(mdata) >= 3:
+                        latest_date = pd.to_datetime(latest_q['PERIOD_END_DATE'])
+                        target_year = latest_date.year - 1
+                        target_month = latest_date.month
+                        mdata_dt = mdata.copy()
+                        mdata_dt['_DATE'] = pd.to_datetime(mdata_dt['PERIOD_END_DATE'])
+                        prior_year = mdata_dt[mdata_dt['_DATE'].dt.year == target_year]
+                        if not prior_year.empty:
+                            prior_year = prior_year.copy()
+                            prior_year['_month_diff'] = abs(prior_year['_DATE'].dt.month - target_month)
+                            best_match = prior_year.loc[prior_year['_month_diff'].idxmin()]
+                            yoy_q = best_match
 
                     if margin_period == "Quarterly":
                         margin_comp = st.radio(
@@ -357,22 +465,31 @@ if selected_option:
                         compare_q = prev_q
 
                     if compare_q is not None:
-                        gross_delta = latest_q['GROSS_MARGIN_PCT'] - compare_q['GROSS_MARGIN_PCT']
-                        op_delta = latest_q['OPERATING_MARGIN_PCT'] - compare_q['OPERATING_MARGIN_PCT']
-                        net_delta = latest_q['NET_MARGIN_PCT'] - compare_q['NET_MARGIN_PCT']
-                        roe_delta = latest_q['ROE_PCT'] - compare_q['ROE_PCT']
+                        def safe_delta(a, b):
+                            try:
+                                fa, fb = float(a), float(b)
+                                if pd.isna(fa) or pd.isna(fb):
+                                    return None
+                                return fa - fb
+                            except (TypeError, ValueError):
+                                return None
+
+                        gross_delta = safe_delta(latest_q['GROSS_MARGIN_PCT'], compare_q['GROSS_MARGIN_PCT'])
+                        op_delta = safe_delta(latest_q['OPERATING_MARGIN_PCT'], compare_q['OPERATING_MARGIN_PCT'])
+                        net_delta = safe_delta(latest_q['NET_MARGIN_PCT'], compare_q['NET_MARGIN_PCT'])
+                        roe_delta = safe_delta(latest_q['ROE_PCT'], compare_q['ROE_PCT'])
 
                         with st.container(horizontal=True):
-                            st.metric("Gross", f"{latest_q['GROSS_MARGIN_PCT']:.1f}%", f"{gross_delta:+.1f}pp", border=True)
-                            st.metric("Operating", f"{latest_q['OPERATING_MARGIN_PCT']:.1f}%", f"{op_delta:+.1f}pp", border=True)
-                            st.metric("Net", f"{latest_q['NET_MARGIN_PCT']:.1f}%", f"{net_delta:+.1f}pp", border=True)
-                            st.metric("ROE", f"{latest_q['ROE_PCT']:.1f}%", f"{roe_delta:+.1f}pp", border=True)
+                            st.metric("Gross", f"{float(latest_q['GROSS_MARGIN_PCT']):.1f}%", f"{gross_delta:+.1f}pp" if gross_delta is not None else None, border=True)
+                            st.metric("Operating", f"{float(latest_q['OPERATING_MARGIN_PCT']):.1f}%", f"{op_delta:+.1f}pp" if op_delta is not None else None, border=True)
+                            st.metric("Net", f"{float(latest_q['NET_MARGIN_PCT']):.1f}%", f"{net_delta:+.1f}pp" if net_delta is not None else None, border=True)
+                            st.metric("ROE", f"{float(latest_q['ROE_PCT']):.1f}%", f"{roe_delta:+.1f}pp" if roe_delta is not None else None, border=True)
                     else:
                         with st.container(horizontal=True):
-                            st.metric("Gross", f"{latest_q['GROSS_MARGIN_PCT']:.1f}%", border=True)
-                            st.metric("Operating", f"{latest_q['OPERATING_MARGIN_PCT']:.1f}%", border=True)
-                            st.metric("Net", f"{latest_q['NET_MARGIN_PCT']:.1f}%", border=True)
-                            st.metric("ROE", f"{latest_q['ROE_PCT']:.1f}%", border=True)
+                            st.metric("Gross", f"{float(latest_q['GROSS_MARGIN_PCT']):.1f}%", border=True)
+                            st.metric("Operating", f"{float(latest_q['OPERATING_MARGIN_PCT']):.1f}%", border=True)
+                            st.metric("Net", f"{float(latest_q['NET_MARGIN_PCT']):.1f}%", border=True)
+                            st.metric("ROE", f"{float(latest_q['ROE_PCT']):.1f}%", border=True)
 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -441,65 +558,242 @@ if selected_option:
         except Exception as e:
             st.warning(f"Error: {e}")
 
-    with tab_sentiment:
+    with tab_transcripts:
         try:
-            sentiment = get_transcript_sentiment(ticker)
-            if not sentiment.empty:
-                latest_score = sentiment.iloc[0]['SENTIMENT_SCORE']
-                avg_score = sentiment['SENTIMENT_SCORE'].mean()
+            transcripts = get_earnings_transcripts(ticker)
+            if not transcripts.empty:
+                # Event selector
+                event_options = []
+                for i, row in transcripts.iterrows():
+                    label = f"{row['EVENT_TYPE']} — {row['FISCAL_PERIOD']} {row['FISCAL_YEAR']} ({str(row['EVENT_TIMESTAMP'])[:10]})"
+                    event_options.append(label)
 
-                def sentiment_label(score):
-                    if score >= 0.3:
-                        return "Positive"
-                    elif score >= 0.1:
-                        return "Slightly positive"
-                    elif score >= -0.1:
-                        return "Neutral"
-                    elif score >= -0.3:
-                        return "Slightly negative"
+                selected_idx = st.selectbox(
+                    "Earnings call", range(len(event_options)),
+                    format_func=lambda i: event_options[i],
+                    label_visibility="collapsed",
+                )
+
+                if selected_idx is not None:
+                    selected_row = transcripts.iloc[selected_idx]
+                    transcript_json = selected_row["TRANSCRIPT"]
+
+                    # Parse the VARIANT/JSON transcript
+                    import json
+                    if isinstance(transcript_json, str):
+                        transcript_data = json.loads(transcript_json)
                     else:
-                        return "Negative"
+                        transcript_data = transcript_json
 
-                with st.container(horizontal=True):
-                    st.metric(
-                        "Latest call sentiment",
-                        sentiment_label(latest_score),
-                        f"{latest_score:+.3f}",
-                        border=True,
-                    )
-                    st.metric(
-                        "Average sentiment",
-                        sentiment_label(avg_score),
-                        f"{avg_score:+.3f}",
-                        border=True,
-                    )
-                    st.metric("Transcripts analysed", len(sentiment), border=True)
+                    # Extract speakers and their text
+                    # Structure: {paragraphs: [{speaker: int, text: str}], speaker_mapping: [{speaker: int, speaker_data: {name, role, company}}]}
+                    speakers = []
+                    speaker_map = {}
 
-                with st.container(border=True):
-                    st.markdown("**Earnings call sentiment trend**")
-                    chart_data = sentiment.sort_values('EVENT_DATE')
-                    st.line_chart(chart_data, x="EVENT_DATE", y="SENTIMENT_SCORE")
+                    if isinstance(transcript_data, dict):
+                        # Build speaker lookup from speaker_mapping
+                        raw_mapping = transcript_data.get("speaker_mapping", [])
+                        if isinstance(raw_mapping, list):
+                            for entry in raw_mapping:
+                                sid = entry.get("speaker")
+                                sdata = entry.get("speaker_data", {})
+                                speaker_map[sid] = {
+                                    "name": sdata.get("name", f"Speaker {sid}"),
+                                    "role": sdata.get("role", ""),
+                                    "company": sdata.get("company", ""),
+                                }
 
-                with st.container(border=True):
-                    st.markdown("**Detail**")
-                    st.dataframe(
-                        sentiment,
-                        column_config={
-                            "EVENT_DATE": st.column_config.DateColumn("Date"),
-                            "EVENT_TYPE": "Type",
-                            "FISCAL_YEAR": "FY",
-                            "FISCAL_PERIOD": "Period",
-                            "SENTIMENT_SCORE": st.column_config.NumberColumn("Sentiment", format="%.3f"),
-                            "TEXT_LENGTH": st.column_config.NumberColumn("Text length", format="%,.0f"),
-                        },
-                        hide_index=True,
-                        use_container_width=True,
-                    )
+                        # Extract paragraphs
+                        paragraphs = transcript_data.get("paragraphs", [])
+                        if isinstance(paragraphs, list):
+                            for para in paragraphs:
+                                sid = para.get("speaker")
+                                text = para.get("text", "")
+                                if text:
+                                    info = speaker_map.get(sid, {"name": f"Speaker {sid}", "role": "", "company": ""})
+                                    title = info["role"]
+                                    if info["company"]:
+                                        title = f"{info['company']} — {title}" if title else info["company"]
+                                    speakers.append({"speaker": info["name"], "title": title, "text": text})
 
-                st.caption("Sentiment scored using SNOWFLAKE.CORTEX.SENTIMENT on earnings call transcripts. Range: -1 (very negative) to +1 (very positive).")
+                    elif isinstance(transcript_data, list):
+                        # Fallback: flat list of segments
+                        for segment in transcript_data:
+                            speaker = segment.get("speaker", segment.get("name", "Unknown"))
+                            text = segment.get("text", segment.get("content", ""))
+                            title = segment.get("title", segment.get("role", ""))
+                            if text:
+                                speakers.append({"speaker": str(speaker), "title": title, "text": text})
+
+                    if speakers:
+                        # Summary metrics
+                        unique_speakers = list({s["speaker"] for s in speakers})
+                        with st.container(horizontal=True):
+                            st.metric("Speakers", len(unique_speakers), border=True)
+                            st.metric("Segments", len(speakers), border=True)
+                            st.metric("Event", selected_row["EVENT_TYPE"], border=True)
+
+                        # Speaker sentiment analysis
+                        st.markdown("**Speaker sentiment**")
+                        speaker_texts = {}
+                        for s in speakers:
+                            if s["speaker"] not in speaker_texts:
+                                speaker_texts[s["speaker"]] = ""
+                            speaker_texts[s["speaker"]] += " " + s["text"]
+
+                        # Score top speakers (limit to first 5 unique speakers for performance)
+                        scored_speakers = []
+                        for speaker_name in unique_speakers[:5]:
+                            combined_text = speaker_texts[speaker_name][:10000]
+                            try:
+                                score_result = conn.query(
+                                    "SELECT SNOWFLAKE.CORTEX.SENTIMENT(:1) AS SCORE",
+                                    params=[combined_text]
+                                )
+                                score = float(score_result.iloc[0]["SCORE"])
+                            except Exception:
+                                score = None
+                            scored_speakers.append({
+                                "Speaker": speaker_name,
+                                "Sentiment": score,
+                                "Segments": sum(1 for s in speakers if s["speaker"] == speaker_name),
+                            })
+
+                        if scored_speakers:
+                            import pandas as pd_local
+                            score_df = pd_local.DataFrame(scored_speakers)
+                            score_df = score_df.sort_values("Sentiment", ascending=False)
+                            with st.container(border=True):
+                                st.dataframe(
+                                    score_df,
+                                    column_config={
+                                        "Speaker": "Speaker",
+                                        "Sentiment": st.column_config.NumberColumn("Sentiment", format="%.3f"),
+                                        "Segments": st.column_config.NumberColumn("Segments"),
+                                    },
+                                    hide_index=True,
+                                    use_container_width=True,
+                                )
+
+                        # Full transcript with speaker annotations
+                        st.markdown("**Transcript**")
+                        speaker_filter = st.selectbox(
+                            "Filter by speaker", ["All"] + unique_speakers,
+                            label_visibility="collapsed", key="speaker_filter"
+                        )
+
+                        with st.container(border=True, height=500):
+                            for segment in speakers:
+                                if speaker_filter != "All" and segment["speaker"] != speaker_filter:
+                                    continue
+                                title_str = f" ({segment['title']})" if segment["title"] else ""
+                                st.markdown(f"**{segment['speaker']}{title_str}**")
+                                st.text(segment["text"][:2000])
+                                st.markdown("---")
+                    else:
+                        st.warning("Could not parse transcript structure.")
             else:
-                st.info("No earnings transcripts available for sentiment analysis")
+                # Fallback: use corpus-based sentiment if no speaker-annotated transcripts available
+                sentiment = get_transcript_sentiment(ticker)
+                if not sentiment.empty:
+                    st.caption("Speaker-annotated transcripts not available. Showing sentiment trend from corpus.")
+                    latest_score = sentiment.iloc[0]['SENTIMENT_SCORE']
+                    avg_score = sentiment['SENTIMENT_SCORE'].mean()
+
+                    def sentiment_label(score):
+                        if score >= 0.3:
+                            return "Positive"
+                        elif score >= 0.1:
+                            return "Slightly positive"
+                        elif score >= -0.1:
+                            return "Neutral"
+                        elif score >= -0.3:
+                            return "Slightly negative"
+                        else:
+                            return "Negative"
+
+                    with st.container(horizontal=True):
+                        st.metric("Latest call sentiment", sentiment_label(latest_score), f"{latest_score:+.3f}", border=True)
+                        st.metric("Average sentiment", sentiment_label(avg_score), f"{avg_score:+.3f}", border=True)
+                        st.metric("Transcripts analysed", len(sentiment), border=True)
+
+                    with st.container(border=True):
+                        st.markdown("**Earnings call sentiment trend**")
+                        chart_data = sentiment.sort_values('EVENT_DATE')
+                        st.line_chart(chart_data, x="EVENT_DATE", y="SENTIMENT_SCORE")
+                else:
+                    st.info("No earnings transcripts available for this company.")
         except Exception as e:
-            st.warning(f"Sentiment analysis unavailable: {e}")
+            st.warning(f"Transcript analysis unavailable: {e}")
+
+    with tab_filings:
+        try:
+            cik = resolve_cik(ticker)
+            if not cik:
+                st.warning("Could not resolve CIK for this ticker. SEC filings require a CIK mapping.")
+                st.stop()
+
+            summary = get_filing_summary(cik)
+            if not summary.empty:
+                with st.expander("Filing types available"):
+                    st.dataframe(summary, use_container_width=True, hide_index=True, height=180)
+
+            sub1, sub2, sub3 = st.tabs(["Segments", "XBRL", "Sections"])
+
+            with sub1:
+                rev_df = get_sec_segments(cik)
+                if not rev_df.empty:
+                    variables = rev_df["VARIABLE_NAME"].dropna().unique().tolist()
+                    selected_var = st.selectbox("Metric", variables, label_visibility="collapsed", key="seg_var")
+                    filtered = rev_df[rev_df["VARIABLE_NAME"] == selected_var] if selected_var else rev_df
+
+                    if not filtered.empty:
+                        segments = filtered["BUSINESS_SEGMENT"].dropna().unique().tolist()
+                        with st.container(border=True):
+                            if segments:
+                                chart = filtered[filtered["BUSINESS_SEGMENT"].notna()].pivot_table(
+                                    index="PERIOD_END_DATE", columns="BUSINESS_SEGMENT", values="VALUE", aggfunc="sum")
+                                st.line_chart(chart, height=300)
+                            else:
+                                st.line_chart(filtered.set_index("PERIOD_END_DATE")["VALUE"], height=300)
+                        with st.expander("Data"):
+                            st.dataframe(filtered, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("No segment data. Foreign issuers may lack structured XBRL.")
+
+            with sub2:
+                xbrl_df = get_sec_xbrl(cik)
+                if not xbrl_df.empty:
+                    stmt_filter = st.selectbox("Statement", ["All", "BS", "IS", "CF"], label_visibility="collapsed", key="xbrl_stmt")
+                    if stmt_filter != "All":
+                        xbrl_df = xbrl_df[xbrl_df["STATEMENT"] == stmt_filter]
+
+                    with st.container(border=True):
+                        st.caption("TOP TAGS")
+                        tags = xbrl_df["TAG"].value_counts().head(10).reset_index()
+                        tags.columns = ["TAG", "COUNT"]
+                        st.bar_chart(tags, x="TAG", y="COUNT", height=200)
+
+                    with st.expander("Full table"):
+                        st.dataframe(xbrl_df, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("No XBRL data. Try Sections tab.")
+
+            with sub3:
+                items_df = get_sec_sections(cik)
+                if not items_df.empty:
+                    sel_item = st.selectbox("Section", items_df.index.tolist(),
+                        format_func=lambda i: f"{items_df.iloc[i]['FORM_TYPE']} — {items_df.iloc[i]['ITEM_TITLE']}  ({items_df.iloc[i]['FILED_DATE']})",
+                        label_visibility="collapsed", key="sec_section")
+                    if sel_item is not None:
+                        row = items_df.iloc[sel_item]
+                        with st.container(border=True):
+                            st.caption(f"{row['FORM_TYPE']} • {row['FILED_DATE']}")
+                            st.markdown(f"**{row['ITEM_TITLE']}**")
+                            st.text_area("", value=row["PREVIEW"] or "—", height=350, disabled=True, label_visibility="collapsed")
+                else:
+                    st.info("No parsed sections available.")
+        except Exception as e:
+            st.warning(f"SEC filings unavailable: {e}")
 else:
     st.info("Search for a company above to begin your deep-dive analysis.")

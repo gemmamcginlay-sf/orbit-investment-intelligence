@@ -90,18 +90,19 @@ JOIN sector_etfs s ON r.TICKER = s.ETF_TICKER
 WHERE r.DAILY_RETURN IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
--- 3. Scheduled Task: Full market data refresh (daily 06:00 UTC)
+-- 3. Scheduled Task: Daily market data refresh (06:00 UTC)
+--    Covers: prices, treasury, FX, policy rates, economic indicators,
+--    insider transactions, and portfolio positions.
 -- ---------------------------------------------------------------------------
--- Suspend existing task before replacing (avoids errors on re-run)
 ALTER TASK IF EXISTS ORBIT_DEMO.CURATED.DAILY_MARKET_DATA_REFRESH SUSPEND;
 
 CREATE OR REPLACE TASK ORBIT_DEMO.CURATED.DAILY_MARKET_DATA_REFRESH
     WAREHOUSE = ORBIT_DEMO_WH
     SCHEDULE = 'USING CRON 0 6 * * * UTC'
-    COMMENT = 'Daily refresh of market data tables from Snowflake Public Data (Paid)'
+    COMMENT = 'Daily refresh of all market data tables from Snowflake Public Data (Paid)'
 AS
 BEGIN
-    -- Refresh stock prices (last 3 years rolling window)
+    -- 3a. Refresh stock prices (last 3 years rolling window)
     CREATE OR REPLACE TABLE ORBIT_DEMO.MARKET_DATA.FACT_STOCK_PRICES AS
     SELECT * FROM (
         WITH price_data AS (
@@ -132,7 +133,7 @@ BEGIN
         WHERE p.PRICE_CLOSE IS NOT NULL
     );
 
-    -- Refresh treasury yields
+    -- 3b. Refresh treasury yields
     CREATE OR REPLACE TABLE ORBIT_DEMO.MARKET_DATA.FACT_TREASURY_YIELDS AS
     SELECT
         ROW_NUMBER() OVER (ORDER BY t.DATE, a.VARIABLE_NAME) AS YIELD_ID,
@@ -156,7 +157,295 @@ BEGIN
     WHERE a.VARIABLE_NAME LIKE 'Treasury Par Yield Curve Rate%'
       AND t.DATE >= DATEADD(YEAR, -3, CURRENT_DATE())
       AND t.VALUE IS NOT NULL;
+
+    -- 3c. Refresh FX rates
+    CREATE OR REPLACE TABLE ORBIT_DEMO.MARKET_DATA.FACT_FX_RATES AS
+    SELECT
+        ROW_NUMBER() OVER (ORDER BY DATE DESC, VARIABLE_NAME) AS FX_ID,
+        DATE, VARIABLE_NAME AS CURRENCY_PAIR, QUOTE_CURRENCY_ID AS QUOTE_CURRENCY,
+        BASE_CURRENCY_ID AS BASE_CURRENCY, VALUE AS EXCHANGE_RATE,
+        'CYBERSYN' AS DATA_SOURCE, CURRENT_TIMESTAMP() AS LOADED_AT
+    FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.FX_RATES_TIMESERIES
+    WHERE BASE_CURRENCY_ID = 'USD' AND DATE >= DATEADD(YEAR, -3, CURRENT_DATE()) AND VALUE IS NOT NULL;
+
+    -- 3d. Refresh policy rates
+    CREATE OR REPLACE TABLE ORBIT_DEMO.MARKET_DATA.FACT_POLICY_RATES AS
+    SELECT
+        ROW_NUMBER() OVER (ORDER BY t.DATE DESC, a.VARIABLE_NAME) AS RATE_ID,
+        t.DATE, a.VARIABLE_NAME AS RATE_NAME, a.GEO_NAME AS COUNTRY, t.VALUE AS RATE_PCT,
+        a.UNIT, a.FREQUENCY, 'BIS' AS DATA_SOURCE, CURRENT_TIMESTAMP() AS LOADED_AT
+    FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.BANK_FOR_INTERNATIONAL_SETTLEMENTS_TIMESERIES t
+    JOIN SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.BANK_FOR_INTERNATIONAL_SETTLEMENTS_ATTRIBUTES a ON t.VARIABLE = a.VARIABLE
+    WHERE UPPER(a.VARIABLE_NAME) LIKE '%POLICY%RATE%'
+      AND t.DATE >= DATEADD(YEAR, -3, CURRENT_DATE()) AND t.VALUE IS NOT NULL;
+
+    -- 3e. Refresh economic indicators
+    CREATE OR REPLACE TABLE ORBIT_DEMO.MARKET_DATA.FACT_ECONOMIC_INDICATORS AS
+    SELECT
+        ROW_NUMBER() OVER (ORDER BY t.DATE, a.VARIABLE_NAME) AS INDICATOR_ID,
+        t.DATE, 'US' AS COUNTRY, a.VARIABLE_NAME AS INDICATOR_NAME, a.MEASURE, a.UNIT, t.VALUE,
+        a.SEASONALLY_ADJUSTED,
+        CASE
+            WHEN UPPER(a.VARIABLE_NAME) LIKE '%GDP%' OR UPPER(a.MEASURE) LIKE '%GROSS DOMESTIC%' THEN 'GDP'
+            WHEN UPPER(a.VARIABLE_NAME) LIKE '%CPI%' OR UPPER(a.MEASURE) LIKE '%CONSUMER PRICE%' THEN 'INFLATION'
+            WHEN UPPER(a.VARIABLE_NAME) LIKE '%UNEMPLOYMENT%' THEN 'UNEMPLOYMENT'
+            WHEN UPPER(a.VARIABLE_NAME) LIKE '%FED FUND%' THEN 'INTEREST_RATE'
+            ELSE 'OTHER'
+        END AS INDICATOR_CATEGORY,
+        'FRED' AS DATA_SOURCE, CURRENT_TIMESTAMP() AS LOADED_AT
+    FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.FINANCIAL_ECONOMIC_INDICATORS_TIMESERIES t
+    JOIN SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.FINANCIAL_ECONOMIC_INDICATORS_ATTRIBUTES a ON t.VARIABLE = a.VARIABLE
+    WHERE t.DATE >= DATEADD(YEAR, -3, CURRENT_DATE()) AND t.VALUE IS NOT NULL
+      AND (UPPER(a.VARIABLE_NAME) LIKE '%GDP%' OR UPPER(a.VARIABLE_NAME) LIKE '%CPI%'
+           OR UPPER(a.VARIABLE_NAME) LIKE '%UNEMPLOYMENT%' OR UPPER(a.VARIABLE_NAME) LIKE '%FED FUND%'
+           OR UPPER(a.MEASURE) LIKE '%CONSUMER PRICE%' OR UPPER(a.MEASURE) LIKE '%GROSS DOMESTIC PRODUCT%');
+
+    -- 3f. Refresh insider transactions
+    CREATE OR REPLACE TABLE ORBIT_DEMO.MARKET_DATA.FACT_INSIDER_TRANSACTIONS AS
+    SELECT
+        ROW_NUMBER() OVER (ORDER BY sit.TRANSACTION_DATE DESC) AS INSIDER_TX_ID,
+        i.ISSUER_ID, i.TICKER, i.COMPANY_NAME, sit.ISSUER_NAME, sit.FORM_TYPE,
+        sit.TRANSACTION_DATE, sit.SECURITY_TITLE, sit.TRANSACTION_TYPE,
+        sit.TRANSACTION_SHARES, sit.TRANSACTION_PRICE_PER_SHARE,
+        sit.POST_TRANSACTION_SHARES_OWNED, sit.OWNERSHIP,
+        'SEC_FORM4' AS DATA_SOURCE, CURRENT_TIMESTAMP() AS LOADED_AT
+    FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.SEC_INSIDER_TRADING_SECURITIES_INDEX sit
+    JOIN ORBIT_DEMO.CURATED.DIM_ISSUER i ON sit.ISSUER_CIK = i.CIK
+    WHERE sit.TRANSACTION_DATE >= DATEADD(YEAR, -3, CURRENT_DATE()) AND sit.TRANSACTION_DATE IS NOT NULL;
+
+    -- 3g. Refresh portfolio positions (depends on updated prices)
+    CREATE OR REPLACE TABLE ORBIT_DEMO.CURATED.FACT_POSITION_DAILY AS
+    WITH size_rank AS (
+        SELECT
+            i.ISSUER_ID, i.TICKER, i.GICS_SECTOR,
+            sp.PRICE_CLOSE, sp.AVG_VOLUME,
+            sp.PRICE_CLOSE * sp.AVG_VOLUME AS SIZE_PROXY,
+            ROW_NUMBER() OVER (ORDER BY sp.PRICE_CLOSE * sp.AVG_VOLUME DESC) AS OVERALL_RANK,
+            ROW_NUMBER() OVER (PARTITION BY i.GICS_SECTOR ORDER BY sp.PRICE_CLOSE * sp.AVG_VOLUME DESC) AS SECTOR_RANK
+        FROM ORBIT_DEMO.CURATED.DIM_ISSUER i
+        JOIN (
+            SELECT TICKER,
+                   MAX(CASE WHEN RN = 1 THEN PRICE_CLOSE END) AS PRICE_CLOSE,
+                   AVG(VOLUME) AS AVG_VOLUME
+            FROM (
+                SELECT TICKER, PRICE_CLOSE, VOLUME,
+                       ROW_NUMBER() OVER (PARTITION BY TICKER ORDER BY PRICE_DATE DESC) AS RN
+                FROM ORBIT_DEMO.MARKET_DATA.FACT_STOCK_PRICES
+                WHERE PRICE_DATE >= DATEADD(DAY, -30, CURRENT_DATE())
+            )
+            GROUP BY TICKER
+            HAVING AVG_VOLUME > 0
+        ) sp ON i.TICKER = sp.TICKER
+    ),
+    portfolio_assignments AS (
+        SELECT 1 AS PORTFOLIO_ID, ISSUER_ID, TICKER, SIZE_PROXY, PRICE_CLOSE
+        FROM size_rank WHERE GICS_SECTOR IN ('Information Technology', 'Communication Services') AND SECTOR_RANK <= 40
+        UNION ALL
+        SELECT 2, ISSUER_ID, TICKER, SIZE_PROXY, PRICE_CLOSE FROM size_rank WHERE OVERALL_RANK <= 100
+        UNION ALL
+        SELECT 3, ISSUER_ID, TICKER, SIZE_PROXY, PRICE_CLOSE FROM size_rank WHERE GICS_SECTOR != 'Energy' AND OVERALL_RANK <= 60
+        UNION ALL
+        SELECT 4, ISSUER_ID, TICKER, SIZE_PROXY, PRICE_CLOSE FROM size_rank WHERE OVERALL_RANK <= 50
+        UNION ALL
+        SELECT 5, ISSUER_ID, TICKER, SIZE_PROXY, PRICE_CLOSE FROM size_rank WHERE (GICS_SECTOR = 'Utilities' AND SECTOR_RANK <= 20) OR (GICS_SECTOR = 'Industrials' AND SECTOR_RANK <= 10)
+        UNION ALL
+        SELECT 6, ISSUER_ID, TICKER, SIZE_PROXY, PRICE_CLOSE FROM size_rank WHERE GICS_SECTOR != 'Energy' AND OVERALL_RANK <= 50
+        UNION ALL
+        SELECT 7, ISSUER_ID, TICKER, SIZE_PROXY, PRICE_CLOSE FROM size_rank WHERE GICS_SECTOR = 'Information Technology' AND SECTOR_RANK <= 30
+        UNION ALL
+        SELECT 8, ISSUER_ID, TICKER, SIZE_PROXY, PRICE_CLOSE FROM size_rank WHERE OVERALL_RANK <= 40
+        UNION ALL
+        SELECT 9, ISSUER_ID, TICKER, SIZE_PROXY, PRICE_CLOSE FROM size_rank WHERE GICS_SECTOR = 'Information Technology' AND SECTOR_RANK BETWEEN 5 AND 35
+        UNION ALL
+        SELECT 10, ISSUER_ID, TICKER, SIZE_PROXY, PRICE_CLOSE FROM size_rank WHERE GICS_SECTOR IN ('Financials', 'Energy', 'Industrials', 'Consumer Staples') AND SECTOR_RANK <= 12
+        UNION ALL
+        SELECT 11, ISSUER_ID, TICKER, SIZE_PROXY, PRICE_CLOSE FROM size_rank WHERE GICS_SECTOR IN ('Utilities', 'Financials', 'Consumer Staples', 'Real Estate') AND SECTOR_RANK <= 10
+    ),
+    weighted AS (
+        SELECT pa.PORTFOLIO_ID, pa.ISSUER_ID, pa.TICKER, pa.PRICE_CLOSE,
+               pa.SIZE_PROXY / SUM(pa.SIZE_PROXY) OVER (PARTITION BY pa.PORTFOLIO_ID) AS WEIGHT,
+               p.AUM_USD
+        FROM portfolio_assignments pa
+        JOIN ORBIT_DEMO.CURATED.DIM_PORTFOLIO p ON pa.PORTFOLIO_ID = p.PORTFOLIO_ID
+    )
+    SELECT
+        ROW_NUMBER() OVER (ORDER BY PORTFOLIO_ID, WEIGHT DESC) AS POSITION_ID,
+        PORTFOLIO_ID, ISSUER_ID, TICKER, WEIGHT,
+        PRICE_CLOSE AS CURRENT_PRICE,
+        ROUND(AUM_USD * WEIGHT / NULLIF(PRICE_CLOSE, 0)) AS SHARES,
+        AUM_USD * WEIGHT AS POSITION_VALUE_USD,
+        CURRENT_DATE() AS AS_OF_DATE,
+        CURRENT_TIMESTAMP() AS LOADED_AT
+    FROM weighted
+    WHERE WEIGHT > 0;
 END;
 
 -- Resume the task (starts scheduled execution)
 ALTER TASK ORBIT_DEMO.CURATED.DAILY_MARKET_DATA_REFRESH RESUME;
+
+-- ---------------------------------------------------------------------------
+-- 4. Weekly Task: Heavy refreshes (Sundays 04:00 UTC)
+--    Covers: DIM_ISSUER (company universe), SEC financials, institutional holdings
+-- ---------------------------------------------------------------------------
+ALTER TASK IF EXISTS ORBIT_DEMO.CURATED.WEEKLY_HEAVY_REFRESH SUSPEND;
+
+CREATE OR REPLACE TASK ORBIT_DEMO.CURATED.WEEKLY_HEAVY_REFRESH
+    WAREHOUSE = ORBIT_DEMO_WH
+    SCHEDULE = 'USING CRON 0 4 * * 0 UTC'
+    COMMENT = 'Weekly refresh of company universe, SEC financials, and institutional holdings'
+AS
+BEGIN
+    -- 4a. Refresh DIM_ISSUER (company universe)
+    CREATE OR REPLACE TABLE ORBIT_DEMO.CURATED.DIM_ISSUER AS
+    WITH active_tickers AS (
+        SELECT DISTINCT TICKER
+        FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.STOCK_PRICE_TIMESERIES
+        WHERE DATE >= DATEADD(DAY, -30, CURRENT_DATE())
+          AND VARIABLE = 'post-market_close' AND VALUE IS NOT NULL
+    ),
+    listed_companies AS (
+        SELECT ci.COMPANY_ID, ci.PRIMARY_TICKER AS TICKER, ci.COMPANY_NAME, ci.CIK,
+               ci.PRIMARY_EXCHANGE_CODE, ci.LEI
+        FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.COMPANY_INDEX ci
+        WHERE ci.PRIMARY_TICKER IS NOT NULL AND ci.CIK IS NOT NULL
+          AND ci.PRIMARY_EXCHANGE_CODE IN ('NYS', 'NAS', 'NSM', 'NMS')
+          AND ci.PRIMARY_TICKER IN (SELECT TICKER FROM active_tickers)
+    ),
+    sector_data AS (
+        SELECT COMPANY_ID, VALUE AS SIC_DESCRIPTION
+        FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.COMPANY_CHARACTERISTICS
+        WHERE RELATIONSHIP_TYPE = 'sic_description' AND RELATIONSHIP_END_DATE IS NULL
+    ),
+    country_data AS (
+        SELECT COMPANY_ID, VALUE AS COUNTRY
+        FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.COMPANY_CHARACTERISTICS
+        WHERE RELATIONSHIP_TYPE = 'business_address_country' AND RELATIONSHIP_END_DATE IS NULL
+    ),
+    with_sector AS (
+        SELECT lc.COMPANY_ID, lc.TICKER, lc.COMPANY_NAME, lc.CIK,
+               lc.PRIMARY_EXCHANGE_CODE, lc.LEI, sd.SIC_DESCRIPTION,
+               COALESCE(cd.COUNTRY, 'US') AS COUNTRY,
+               CASE
+                   WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%software%','%computer%','%semiconductor%','%data processing%','%electronic%','%business services%') THEN 'Information Technology'
+                   WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%pharmaceutical%','%biological%','%medical%','%surgical%','%health%','%drug%','%hospital%') THEN 'Health Care'
+                   WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%bank%','%insurance%','%investment%','%securities%','%finance%','%credit%','%loan%','%savings%') THEN 'Financials'
+                   WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%retail%','%automobile%','%motor vehicle%','%apparel%','%restaurant%','%eating%','%hotel%','%entertainment%','%catalog%','%mail-order%','%variety store%','%department store%','%general merchandise%','%e-commerce%','%home furnish%','%sporting%','%toy%','%hobby%','%book%','%leisure%') THEN 'Consumer Discretionary'
+                   WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%food%','%beverage%','%tobacco%','%household%','%grocery%','%soap%','%cleaning%','%personal product%') THEN 'Consumer Staples'
+                   WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%oil%','%gas%','%petroleum%','%crude%','%coal%','%drilling%','%refin%','%pipeline%') THEN 'Energy'
+                   WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%aerospace%','%defense%','%construction%','%machinery%','%transportation%','%freight%','%trucking%','%railroad%','%airline%','%air transport%','%waste%','%consult%') THEN 'Industrials'
+                   WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%telecom%','%wireless%','%broadcast%','%cable%','%communication%','%publishing%','%motion picture%','%television%') THEN 'Communication Services'
+                   WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%electric service%','%water supply%','%natural gas dist%','%power%','%utility%','%electric%gas%') THEN 'Utilities'
+                   WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%chemical%','%metal%','%mining%','%paper%','%steel%','%gold%','%copper%','%aluminum%','%lumber%') THEN 'Materials'
+                   WHEN LOWER(sd.SIC_DESCRIPTION) LIKE ANY ('%real estate%','%reit%') THEN 'Real Estate'
+                   ELSE 'Other'
+               END AS GICS_SECTOR
+        FROM listed_companies lc
+        LEFT JOIN sector_data sd ON lc.COMPANY_ID = sd.COMPANY_ID
+        LEFT JOIN country_data cd ON lc.COMPANY_ID = cd.COMPANY_ID
+    )
+    SELECT
+        ROW_NUMBER() OVER (ORDER BY COMPANY_NAME) AS ISSUER_ID,
+        TICKER, COMPANY_NAME, GICS_SECTOR, SIC_DESCRIPTION, CIK,
+        COMPANY_ID AS PROVIDER_COMPANY_ID, LEI, COUNTRY,
+        PRIMARY_EXCHANGE_CODE AS EXCHANGE,
+        'SNOWFLAKE_PUBLIC_DATA_PAID' AS DATA_SOURCE,
+        CURRENT_TIMESTAMP() AS LOADED_AT
+    FROM with_sector;
+
+    -- 4b. Refresh SEC financials
+    CREATE OR REPLACE TABLE ORBIT_DEMO.MARKET_DATA.FACT_SEC_FINANCIALS AS
+    WITH our_companies AS (
+        SELECT ISSUER_ID, CIK, TICKER, COMPANY_NAME, GICS_SECTOR
+        FROM ORBIT_DEMO.CURATED.DIM_ISSUER WHERE CIK IS NOT NULL
+    ),
+    sec_raw AS (
+        SELECT CIK, ADSH, TAG, PERIOD_END_DATE, COVERED_QTRS,
+               TRY_CAST(VALUE AS FLOAT) AS VALUE_NUM
+        FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.SEC_CORPORATE_REPORT_ATTRIBUTES
+        WHERE CIK IN (SELECT CIK FROM our_companies)
+          AND PERIOD_END_DATE >= DATEADD(YEAR, -3, CURRENT_DATE())
+          AND VALUE IS NOT NULL AND TRY_CAST(VALUE AS FLOAT) IS NOT NULL
+          AND TAG IN (
+              'Revenues','RevenueFromContractWithCustomerExcludingAssessedTax',
+              'NetIncomeLoss','GrossProfit','CostOfRevenue','CostOfGoodsAndServicesSold',
+              'OperatingIncomeLoss',
+              'EarningsPerShareBasic','EarningsPerShareDiluted',
+              'ResearchAndDevelopmentExpense','InterestExpense',
+              'Assets','Liabilities','StockholdersEquity',
+              'CashAndCashEquivalentsAtCarryingValue','LongTermDebt',
+              'NetCashProvidedByUsedInOperatingActivities',
+              'NetCashProvidedByUsedInFinancingActivities',
+              'PaymentsToAcquirePropertyPlantAndEquipment',
+              'DepreciationDepletionAndAmortization',
+              'EntityCommonStockSharesOutstanding',
+              'WeightedAverageNumberOfSharesOutstandingBasic'
+          )
+    ),
+    pivoted AS (
+        SELECT CIK, ADSH, PERIOD_END_DATE, COVERED_QTRS,
+            CASE WHEN COVERED_QTRS=1 THEN 'Q' WHEN COVERED_QTRS=4 THEN 'FY' ELSE 'OTHER' END AS FISCAL_PERIOD,
+            MAX(CASE WHEN TAG IN ('Revenues','RevenueFromContractWithCustomerExcludingAssessedTax') THEN VALUE_NUM END) AS REVENUE,
+            MAX(CASE WHEN TAG='NetIncomeLoss' THEN VALUE_NUM END) AS NET_INCOME,
+            MAX(CASE WHEN TAG='GrossProfit' THEN VALUE_NUM END) AS GROSS_PROFIT,
+            MAX(CASE WHEN TAG IN ('CostOfRevenue','CostOfGoodsAndServicesSold') THEN VALUE_NUM END) AS COST_OF_REVENUE,
+            MAX(CASE WHEN TAG='OperatingIncomeLoss' THEN VALUE_NUM END) AS OPERATING_INCOME,
+            MAX(CASE WHEN TAG='EarningsPerShareBasic' THEN VALUE_NUM END) AS EPS_BASIC,
+            MAX(CASE WHEN TAG='EarningsPerShareDiluted' THEN VALUE_NUM END) AS EPS_DILUTED,
+            MAX(CASE WHEN TAG='ResearchAndDevelopmentExpense' THEN VALUE_NUM END) AS RD_EXPENSE,
+            MAX(CASE WHEN TAG='InterestExpense' THEN VALUE_NUM END) AS INTEREST_EXPENSE,
+            MAX(CASE WHEN TAG='Assets' THEN VALUE_NUM END) AS TOTAL_ASSETS,
+            MAX(CASE WHEN TAG='Liabilities' THEN VALUE_NUM END) AS TOTAL_LIABILITIES,
+            MAX(CASE WHEN TAG='StockholdersEquity' THEN VALUE_NUM END) AS TOTAL_EQUITY,
+            MAX(CASE WHEN TAG='CashAndCashEquivalentsAtCarryingValue' THEN VALUE_NUM END) AS CASH_AND_EQUIVALENTS,
+            MAX(CASE WHEN TAG='LongTermDebt' THEN VALUE_NUM END) AS LONG_TERM_DEBT,
+            MAX(CASE WHEN TAG='NetCashProvidedByUsedInOperatingActivities' THEN VALUE_NUM END) AS OPERATING_CASH_FLOW,
+            MAX(CASE WHEN TAG='NetCashProvidedByUsedInFinancingActivities' THEN VALUE_NUM END) AS FINANCING_CASH_FLOW,
+            MAX(CASE WHEN TAG='PaymentsToAcquirePropertyPlantAndEquipment' THEN VALUE_NUM END) AS CAPEX,
+            MAX(CASE WHEN TAG='DepreciationDepletionAndAmortization' THEN VALUE_NUM END) AS DEPRECIATION,
+            MAX(CASE WHEN TAG IN ('EntityCommonStockSharesOutstanding','WeightedAverageNumberOfSharesOutstandingBasic') THEN VALUE_NUM END) AS SHARES_OUTSTANDING
+        FROM sec_raw GROUP BY CIK, ADSH, PERIOD_END_DATE, COVERED_QTRS
+    ),
+    deduped AS (
+        SELECT *, ROW_NUMBER() OVER (
+            PARTITION BY CIK, PERIOD_END_DATE, FISCAL_PERIOD
+            ORDER BY (CASE WHEN REVENUE IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN NET_INCOME IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN TOTAL_ASSETS IS NOT NULL THEN 1 ELSE 0 END) DESC
+        ) AS RN
+        FROM pivoted
+        WHERE REVENUE IS NOT NULL OR TOTAL_ASSETS IS NOT NULL OR OPERATING_CASH_FLOW IS NOT NULL
+    )
+    SELECT
+        ROW_NUMBER() OVER (ORDER BY oc.ISSUER_ID, d.PERIOD_END_DATE DESC) AS FINANCIAL_ID,
+        oc.ISSUER_ID, oc.TICKER, oc.COMPANY_NAME, oc.GICS_SECTOR,
+        d.PERIOD_END_DATE, d.FISCAL_PERIOD,
+        d.REVENUE, d.NET_INCOME, d.GROSS_PROFIT, d.OPERATING_INCOME,
+        d.EPS_BASIC, d.EPS_DILUTED, d.RD_EXPENSE, d.INTEREST_EXPENSE,
+        d.TOTAL_ASSETS, d.TOTAL_LIABILITIES, d.TOTAL_EQUITY,
+        d.CASH_AND_EQUIVALENTS, d.LONG_TERM_DEBT,
+        d.OPERATING_CASH_FLOW, d.FINANCING_CASH_FLOW, d.CAPEX, d.DEPRECIATION, d.SHARES_OUTSTANDING,
+        CASE WHEN d.REVENUE > 0 THEN ROUND(COALESCE(d.GROSS_PROFIT, d.REVENUE - d.COST_OF_REVENUE) / d.REVENUE * 100, 2) END AS GROSS_MARGIN_PCT,
+        CASE WHEN d.REVENUE > 0 THEN ROUND(d.OPERATING_INCOME / d.REVENUE * 100, 2) END AS OPERATING_MARGIN_PCT,
+        CASE WHEN d.REVENUE > 0 THEN ROUND(d.NET_INCOME / d.REVENUE * 100, 2) END AS NET_MARGIN_PCT,
+        CASE WHEN d.TOTAL_EQUITY > 0 THEN ROUND(d.NET_INCOME / d.TOTAL_EQUITY * 100, 2) END AS ROE_PCT,
+        CASE WHEN d.TOTAL_EQUITY > 0 THEN ROUND(d.LONG_TERM_DEBT / d.TOTAL_EQUITY, 3) END AS DEBT_TO_EQUITY,
+        d.OPERATING_CASH_FLOW - ABS(COALESCE(d.CAPEX, 0)) AS FREE_CASH_FLOW,
+        'SNOWFLAKE_PUBLIC_DATA_PAID' AS DATA_SOURCE, CURRENT_TIMESTAMP() AS LOADED_AT
+    FROM deduped d
+    JOIN our_companies oc ON d.CIK = oc.CIK
+    WHERE d.RN = 1;
+
+    -- 4c. Refresh institutional holdings
+    CREATE OR REPLACE TABLE ORBIT_DEMO.MARKET_DATA.FACT_INSTITUTIONAL_HOLDINGS AS
+    SELECT
+        ROW_NUMBER() OVER (ORDER BY idx.FILING_DATE DESC, att.PRIMARY_TICKER) AS HOLDING_ID,
+        i.ISSUER_ID, i.TICKER, i.COMPANY_NAME,
+        idx.FILING_MANAGER_NAME AS INSTITUTION_NAME, idx.FILING_DATE,
+        att.MARKET_VALUE AS MARKET_VALUE_USD, att.NUMBER_OF_SHARES AS SHARES_HELD,
+        att.INVESTMENT_DISCRETION,
+        'SEC_13F' AS DATA_SOURCE, CURRENT_TIMESTAMP() AS LOADED_AT
+    FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.SEC_HOLDING_FILING_INDEX idx
+    JOIN SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.SEC_HOLDING_FILING_ATTRIBUTES att ON idx.ADSH = att.ADSH
+    JOIN ORBIT_DEMO.CURATED.DIM_ISSUER i ON att.PRIMARY_TICKER = i.TICKER
+    WHERE idx.FILING_DATE >= DATEADD(YEAR, -2, CURRENT_DATE());
+END;
+
+ALTER TASK ORBIT_DEMO.CURATED.WEEKLY_HEAVY_REFRESH RESUME;

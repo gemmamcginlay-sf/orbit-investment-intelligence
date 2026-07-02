@@ -12,7 +12,7 @@ st.set_page_config(
 
 # Logo above navigation — use sidebar image at top
 with st.sidebar:
-    st.image(".streamlit/orbit_logo_light_horizontal.png", use_container_width=True)
+    st.image(".streamlit/orbit_logo_dark_horizontal_2.png", use_container_width=True)
     st.markdown("---")
 
 # Shared connection
